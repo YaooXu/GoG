@@ -9,6 +9,9 @@ python3 preprocess_dump.py \
     --out_dir data/processed
 
 """
+import sys
+sys.path.append('../')
+
 import argparse
 import multiprocessing
 from multiprocessing import Queue, Process
@@ -25,7 +28,7 @@ def get_arg_parser():
     parser.add_argument('--input_file', type=str, required=True, help='path to gz wikidata json dump')
     parser.add_argument('--out_dir', type=str, required=True, help='path to output directory')
     parser.add_argument('--language_id', type=str, default='en', help='language identifier')
-    parser.add_argument('--processes', type=int, default=90, help="number of concurrent processes to spin off. ")
+    parser.add_argument('--processes', type=int, default=50, help="number of concurrent processes to spin off. ")
     parser.add_argument('--batch_size', type=int, default=10000)
     parser.add_argument('--num_lines_read', type=int, default=-1,
                         help='Terminate after num_lines_read lines are read. Useful for debugging.')

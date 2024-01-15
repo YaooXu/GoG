@@ -7,6 +7,22 @@ from prompt_list import *
 from rank_bm25 import BM25Okapi
 from sentence_transformers import util
 from sentence_transformers import SentenceTransformer
+import os
+
+
+def set_environment_variable(func):
+    def wrapper(*args, **kwargs):
+        os.environ["http_proxy"] = "socks5h://127.0.0.1:11300"
+        os.environ["https_proxy"] = "socks5h://127.0.0.1:11300"
+
+        result = func(*args, **kwargs)
+
+        del os.environ["http_proxy"]
+        del os.environ["https_proxy"]
+
+        return result
+
+    return wrapper
 
 def retrieve_top_docs(query, docs, model, width=3):
     """
@@ -102,7 +118,7 @@ def clean_relations_bm25_sent(topn_relations, topn_scores, entity_id, head_relat
         i+=1
     return True, relations
 
-
+@set_environment_variable
 def run_llm(prompt, temperature, max_tokens, opeani_api_keys, engine="gpt-3.5-turbo"):
     if "llama" in engine.lower():
         openai.api_key = "EMPTY"
@@ -190,12 +206,12 @@ def if_finish_list(lst):
 
 
 def prepare_dataset(dataset_name):
-    if dataset_name == 'cwq':
-        with open('../data/cwq.json',encoding='utf-8') as f:
+    if dataset_name.startswith('cwq'):
+        with open(f'../data/{dataset_name}.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'question'
-    elif dataset_name == 'webqsp':
-        with open('../data/WebQSP.json',encoding='utf-8') as f:
+    elif dataset_name.startswith('webqsp'):
+        with open(f'../data/{dataset_name}.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'RawQuestion'
     elif dataset_name == 'grailqa':

@@ -1,0 +1,9 @@
+Freebase/
+.history/
+Wikidata/
+.vscode/
+*.pyc
+data/
+tmp*
+*.jsonl
+*.json

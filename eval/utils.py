@@ -3,12 +3,12 @@ import re
 
 
 def prepare_dataset_for_eval(dataset_name, output_file):
-    if dataset_name == 'cwq':
-        with open('../data/cwq.json',encoding='utf-8') as f:
+    if dataset_name.startswith('cwq'):
+        with open(f'../data/{dataset_name}.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'question'
-    elif dataset_name == 'webqsp':
-        with open('../data/WebQSP.json',encoding='utf-8') as f:
+    elif dataset_name.startswith('webqsp'):
+        with open(f'../data/{dataset_name}.json',encoding='utf-8') as f:
             datas = json.load(f)
         question_string = 'RawQuestion'
     elif dataset_name == 'grailqa':
@@ -49,19 +49,20 @@ def prepare_dataset_for_eval(dataset_name, output_file):
 
 def align(dataset_name, question_string, data, ground_truth_datas):
     answer_list= []
-    origin_data = [j for j in ground_truth_datas if j[question_string] == data[question_string]][0]
-    if dataset_name == 'cwq':
-        if 'answers' in origin_data:
-            answers = origin_data["answers"]
-        else:
-            answers = origin_data["answer"]
-        for answer in answers:
-            alias = answer['aliases']
-            ans = answer['answer']
-            alias.append(ans)
-            answer_list.extend(alias)
+    origin_data = [j for j in ground_truth_datas if j[question_string] == data['question']][0]
+    if dataset_name.startswith('cwq'):
+        answer_list = [origin_data['answer']]
+        # if 'answers' in origin_data:
+        #     answers = origin_data["answers"]
+        # else:
+        #     answers = origin_data["answer"]
+        # for answer in answers:
+        #     alias = answer['aliases']
+        #     ans = answer['answer']
+        #     alias.append(ans)
+        #     answer_list.extend(alias)
 
-    elif dataset_name == 'webqsp':
+    elif dataset_name.startswith('webqsp'):
         answers = origin_data["Parses"]
         for answer in answers:
             for name in answer['Answers']:
@@ -104,6 +105,8 @@ def check_string(string):
     return "{" in string
 
 def clean_results(string):
+    if string.lower().startswith('{yes}'):
+        string = string[5:]
     if "{" in string:
         start = string.find("{") + 1
         end = string.find("}")

@@ -4,12 +4,13 @@ from utils import *
 from freebase_func import *
 import random
 from client import *
+import multiprocessing as mp
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str,
-                        default="webqsp", help="choose the dataset.")
+                        default="cwq_dev", help="choose the dataset.")
     parser.add_argument("--max_length", type=int,
                         default=256, help="the max length of LLMs output.")
     parser.add_argument("--temperature_exploration", type=float,
@@ -25,7 +26,7 @@ if __name__ == '__main__':
     parser.add_argument("--LLM_type", type=str,
                         default="gpt-3.5-turbo", help="base LLM model.")
     parser.add_argument("--opeani_api_keys", type=str,
-                        default="", help="if the LLM_type is gpt-3.5-turbo or gpt-4, you need add your own openai api keys.")
+                        default="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", help="if the LLM_type is gpt-3.5-turbo or gpt-4, you need add your own openai api keys.")
     parser.add_argument("--num_retain_entity", type=int,
                         default=5, help="Number of entities retained during entities search.")
     parser.add_argument("--prune_tools", type=str,
@@ -36,6 +37,7 @@ if __name__ == '__main__':
     print("Start Running ToG on %s dataset." % args.dataset)
     for data in tqdm(datas):
         question = data[question_string]
+        print(question)
         topic_entity = data['topic_entity']
         cluster_chain_of_entities = []
         if len(topic_entity) == 0:
@@ -49,10 +51,12 @@ if __name__ == '__main__':
             current_entity_relations_list = []
             i=0
             for entity in topic_entity:
+                # print(entity)
                 if entity!="[FINISH_ID]":
                     retrieve_relations_with_scores = relation_search_prune(entity, topic_entity[entity], pre_relations, pre_heads[i], question, args)  # best entity triplet, entitiy_id
                     current_entity_relations_list.extend(retrieve_relations_with_scores)
                 i+=1
+            # print(current_entity_relations_list)
             total_candidates = []
             total_scores = []
             total_relations = []
@@ -80,9 +84,10 @@ if __name__ == '__main__':
                 half_stop(question, cluster_chain_of_entities, depth, args)
                 flag_printed = True
                 break
-                
+            # print(total_candidates, total_scores)
             flag, chain_of_entities, entities_id, pre_relations, pre_heads = entity_prune(total_entities_id, total_relations, total_candidates, total_topic_entities, total_head, total_scores, args)
             cluster_chain_of_entities.append(chain_of_entities)
+            # print(cluster_chain_of_entities)
             if flag:
                 stop, results = reasoning(question, cluster_chain_of_entities, args)
                 if stop:

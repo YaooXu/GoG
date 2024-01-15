@@ -332,7 +332,7 @@ if __name__ == "__main__":
         help="Output directory",
     )
     parser.add_argument("--num_chunks", type=int, default=5)
-    parser.add_argument("--num_workers", type=int, default=400)
+    parser.add_argument("--num_workers", type=int, default=50)
     parser.add_argument("--chunk_idx", type=int, default=-1)
 
     args = parser.parse_args()

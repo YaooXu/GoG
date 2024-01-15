@@ -14,7 +14,9 @@ Q: What is the country close to Russia where Mikheil Saakashvii holds a governme
 A: First, China, Norway, Finland, Estonia and Georgia is close to Russia. Second, Mikheil Saakashvii holds a government position at Georgia. The answer is {Georgia}.
 
 Q: What drug did the actor who portrayed the character Urethane Wheels Guy overdosed on?
-A: First, Mitchell Lee Hedberg portrayed character Urethane Wheels Guy. Second, Mitchell Lee Hedberg overdose Heroin. The answer is {Heroin}."""
+A: First, Mitchell Lee Hedberg portrayed character Urethane Wheels Guy. Second, Mitchell Lee Hedberg overdose Heroin. The answer is {Heroin}.
+
+Follow the examples above to answer the question below with the same format."""
 
 io_prompt = """Q: What state is home to the university that is represented in sports by George Washington Colonials men's basketball?
 A: {Washington, D.C.}.

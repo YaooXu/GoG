@@ -1,7 +1,7 @@
 from SPARQLWrapper import SPARQLWrapper, JSON
 from utils import *
 
-SPARQLPATH = "http://192.168.80.12:8890/sparql"  # depend on your own internal address and port, shown in Freebase folder's readme.md
+SPARQLPATH = "http://127.0.0.1:18890/sparql"  # depend on your own internal address and port, shown in Freebase folder's readme.md
 
 # pre-defined sparqls
 sparql_head_relations = """\nPREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT ?relation\nWHERE {\n  ns:%s ?relation ?x .\n}"""
@@ -129,10 +129,14 @@ def relation_search_prune(entity_id, entity_name, pre_relations, pre_head, quest
     total_relations = head_relations+tail_relations
     total_relations.sort()  # make sure the order in prompt is always equal
     
+    # print(total_relations) 
+    
     if args.prune_tools == "llm":
         prompt = construct_relation_prune_prompt(question, entity_name, total_relations, args)
 
         result = run_llm(prompt, args.temperature_exploration, args.max_length, args.opeani_api_keys, args.LLM_type)
+        # print(result)
+        
         flag, retrieve_relations_with_scores = clean_relations(result, entity_id, head_relations) 
 
     elif args.prune_tools == "bm25":
@@ -154,7 +158,7 @@ def entity_search(entity, relation, head=True):
         tail_entities_extract = sparql_tail_entities_extract% (entity, relation)
         entities = execurte_sparql(tail_entities_extract)
     else:
-        head_entities_extract = sparql_head_entities_extract% (entity, relation)
+        head_entities_extract = sparql_head_entities_extract% (relation, entity)
         entities = execurte_sparql(head_entities_extract)
 
 
@@ -182,6 +186,7 @@ def entity_score(question, entity_candidates_id, score, relation, args):
         prompt = construct_entity_score_prompt(question, relation, entity_candidates)
 
         result = run_llm(prompt, args.temperature_exploration, args.max_length, args.opeani_api_keys, args.LLM_type)
+        # print(result)
         return [float(x) * score for x in clean_scores(result, entity_candidates)], entity_candidates, entity_candidates_id
 
     elif args.prune_tools == "bm25":
@@ -247,7 +252,7 @@ def reasoning(question, cluster_chain_of_entities, args):
     prompt += "\nKnowledge Triplets: " + chain_prompt + 'A: '
 
     response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.opeani_api_keys, args.LLM_type)
-    
+    print(response)
     result = extract_answer(response)
     if if_true(result):
         return True, response
