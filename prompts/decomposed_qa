@@ -1,0 +1,29 @@
+Please decompose a complex query into multiple single queries.
+
+QC: What state is the the education institution has a sports team named George Washington Colonials men's basketball in?
+QS: [one_hop_qa] Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["George Washington University"]
+QS: [one_hop_qa] What state is the George Washington University in?
+A: ["Washington, D.C"]
+QS: [EOS]
+
+QC: What year did the team with Baltimore Fight Song win the Superbowl?
+QS: [one_hop_qa] Which team associated with the Baltimore Fight Song?
+A: ["Baltimore Ravens"]
+QS: [one_hop_qa] What year did the Baltimore Ravens win the Superbowl?
+A: ["Super Bowl XLVII", "Super Bowl XXXV"]
+QS: [EOS]
+
+QC: What language is spoken in the country that has Southern Peninsular?
+QS: [one_hop_qa] Which country has Southern Peninsular?
+A: ["Iceland"]
+QS: [one_hop_qa] What language is spoken in Iceland
+A: ["Icelandic Language"]
+QS: [EOS]
+
+QC: Who dated the performer who headlined the concert tour called Demi World Tour?
+QS: [one_hop_qa] Who is the performer who headlined the concert tour called Demi World Tour?
+A: ["Demi Lovato"]
+QS: [one_hop_qa] Who did Demi Lovato date?
+A: ["Nicholas Braun", "Cody Linley"]
+QS: [EOS]

@@ -7,16 +7,13 @@ import random
 import re
 from typing import Dict, List
 from SPARQLWrapper import SPARQLWrapper, JSON
-from pydantic import conint
 
-from freebase_interface import (
-    convert_id_to_label_in_triples,
-    get_1hop_triples,
-    triples_to_str,
+from kb_interface.freebase_interface import (
+    convert_id_to_name_in_triples,
 )
 
 
-SPARQLPATH = "http://localhost:18890/sparql"
+SPARQLPATH = "http://210.75.240.139:18890/sparql"
 sparql = SPARQLWrapper(SPARQLPATH)
 sparql.setReturnFormat(JSON)
 ns_prefix = "http://rdf.freebase.com/ns/"
@@ -44,9 +41,7 @@ def convert_path_to_edge_set(path):
     return set(edges)
 
 
-def get_crucial_edges(
-    all_topic_node_to_path: List[Dict[str, List]], k=1, n_topic=1
-) -> List:
+def get_crucial_edges(all_topic_node_to_path: List[Dict[str, List]], k=1, n_topic=1) -> List:
     """_summary_
 
     Args:
@@ -79,15 +74,11 @@ def get_crucial_edges(
             for edge in edge_set:
                 edge_to_cnt[edge] += 1
         # overlap between multiple grounding paths
-        edge_to_cnt = list(
-            sorted(edge_to_cnt.items(), key=lambda x: x[1], reverse=True)
-        )
+        edge_to_cnt = list(sorted(edge_to_cnt.items(), key=lambda x: x[1], reverse=True))
 
         max_cnt = edge_to_cnt[0][1]
         candidate_edges = [edge for edge, cnt in edge_to_cnt if cnt == max_cnt]
-        crucial_edges.extend(
-            random.sample(candidate_edges, min(k, len(candidate_edges)))
-        )
+        crucial_edges.extend(random.sample(candidate_edges, min(k, len(candidate_edges))))
 
         # candidate_edges = [edge for edge, cnt in edge_to_cnt]
         # crucial_edges.extend(candidate_edges)
@@ -204,14 +195,10 @@ def get_crucial_edges_in_sparql(data_path="./data/cwq_dev.json"):
                 bound_triple = triple.copy()
 
                 if triple[0].startswith("?") and triple[0][1:] in binding:
-                    bound_triple[0] = binding[triple[0][1:]]["value"].replace(
-                        ns_prefix, "ns:"
-                    )
+                    bound_triple[0] = binding[triple[0][1:]]["value"].replace(ns_prefix, "ns:")
 
                 if triple[-1].startswith("?") and triple[-1][1:] in binding:
-                    bound_triple[-1] = binding[triple[-1][1:]]["value"].replace(
-                        ns_prefix, "ns:"
-                    )
+                    bound_triple[-1] = binding[triple[-1][1:]]["value"].replace(ns_prefix, "ns:")
 
                 # remove all ns prefix:
                 for i in range(3):
@@ -225,10 +212,14 @@ def get_crucial_edges_in_sparql(data_path="./data/cwq_dev.json"):
 
             topic_node_to_path = bfs_shortest_paths(bound_triples, ans, topic_mids)
 
-            all_topic_node_to_path.append(topic_node_to_path)
-            all_bound_triples.append(bound_triples)
-
-        crucial_edges = get_crucial_edges(all_topic_node_to_path)
+            if len(topic_node_to_path):
+                all_topic_node_to_path.append(topic_node_to_path)
+                all_bound_triples.append(bound_triples)
+        try:
+            crucial_edges = get_crucial_edges(all_topic_node_to_path)
+        except Exception as e:
+            crucial_edges = []
+            print(e)
         sample["crucial_edges"] = crucial_edges
 
     return samples
@@ -255,9 +246,9 @@ def generate_crucial_triples(filepath):
 def convert_triples_to_str(triples):
     str_triples = []
     for i, triple in enumerate(triples):
-        triple[0] = 'ns:' + triple[0]
-        triple[1] = 'ns:' + triple[1]
-        triple[2] = 'ns:' + triple[2]
+        triple[0] = "ns:" + triple[0]
+        triple[1] = "ns:" + triple[1]
+        triple[2] = "ns:" + triple[2]
         str_triples.append(" ".join(triple) + " .")
     return "\n".join(str_triples)
 
@@ -342,11 +333,10 @@ def get_triples_by_edges(head_id, tail_id):
 
 
 if __name__ == "__main__":
-    # with open("./data/cwq.json", "r") as f:
+    # with open("./data/cwq/ComplexWebQuestions_train.json", "r") as f:
     #     samples = json.load(f)
-
     # samples = samples[:100]
-    # with open("./data/cwq_dev.json", "w") as f:
+    # with open("./data/cwq/train_dev.json", "w") as f:
     #     json.dump(samples, f, indent=2)
 
     # filepath = "./data/cwq_dev.json"
@@ -357,21 +347,20 @@ if __name__ == "__main__":
     # # convert id to label
     # for sample in samples_with_crucial_triples:
     #     mid_crucial_triples.extend(deepcopy(sample["crucial_triples"]))
-    #     sample["crucial_triples"] = convert_id_to_label_in_triples(
-    #         sample["crucial_triples"]
-    #     )
+    #     sample["crucial_triples"] = convert_id_to_label_in_triples(sample["crucial_triples"])
 
-    # output_filepath = "data/mid_crucial_triples.json"
+    # output_filepath = "./data/cwq_dev_mid_crucial_triples.json"
     # with open(output_filepath, "w") as f:
     #     json.dump(mid_crucial_triples, f, indent=1)
 
-    # output_filepath = "data/cwq_with_crucial_triples.json"
+    # output_filepath = "./data/cwq_dev_samples_with_crucial_triples.json"
     # with open(output_filepath, "w") as f:
     #     json.dump(samples_with_crucial_triples, f, indent=1)
 
-    output_filepath = "data/mid_crucial_triples.json"
+    output_filepath = "./data/cwq_dev_mid_crucial_triples.json"
     with open(output_filepath, "r") as f:
         mid_crucial_triples = json.load(f)
+
     # delete_triples_from_kb(mid_crucial_triples)
     insert_triples_into_kb(mid_crucial_triples)
 

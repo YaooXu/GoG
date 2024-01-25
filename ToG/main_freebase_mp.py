@@ -3,7 +3,7 @@ from tqdm import tqdm
 import argparse
 from freebase_func import *
 import random
-from client import *
+from kb_interface.client import *
 from multiprocessing import Pool
 from threading import Lock
 

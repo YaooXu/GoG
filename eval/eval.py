@@ -4,9 +4,9 @@ from utils import *
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str,
-                        default="cwq", help="choose the dataset.")
+                        default="cwq_train_dev", help="choose the dataset.")
     parser.add_argument("--output_file", type=str,
-                        default="../ToG/I-1-ToG_cwq_dev.json", help="the output file name.")
+                        default="../src/ToG_cwq_train_dev-C.json", help="the output file name.")
     parser.add_argument("--constraints_refuse", type=bool,
                         default=True, help="LLM may have refuse erorr, enable this option to skip current sample.")
     args = parser.parse_args()

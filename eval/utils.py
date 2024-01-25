@@ -51,16 +51,16 @@ def align(dataset_name, question_string, data, ground_truth_datas):
     answer_list= []
     origin_data = [j for j in ground_truth_datas if j[question_string] == data['question']][0]
     if dataset_name.startswith('cwq'):
-        answer_list = [origin_data['answer']]
-        # if 'answers' in origin_data:
-        #     answers = origin_data["answers"]
-        # else:
-        #     answers = origin_data["answer"]
-        # for answer in answers:
-        #     alias = answer['aliases']
-        #     ans = answer['answer']
-        #     alias.append(ans)
-        #     answer_list.extend(alias)
+        # answer_list = [origin_data['answer']]
+        if 'answers' in origin_data:
+            answers = origin_data["answers"]
+        else:
+            answers = origin_data["answer"]
+        for answer in answers:
+            alias = answer['aliases']
+            ans = answer['answer']
+            alias.append(ans)
+            answer_list.extend(alias)
 
     elif dataset_name.startswith('webqsp'):
         answers = origin_data["Parses"]

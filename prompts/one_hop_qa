@@ -1,0 +1,17 @@
+QC: Which education institution has a sports team named George Washington Colonials men's basketball?
+QS: [extract_entity] Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["George Washington Colonials men's basketball"]
+QS: [filter_relations] Entity: ["George Washington Colonials men's basketball"]. Question: Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["education.educational_institution.sports_teams", "education.athletics_brand.teams", "sports.school_sports_team.school", "sports.school_sports_team.athletics_brand"]
+QS: [find_answer] Relation: ["education.educational_institution.sports_teams", "education.athletics_brand.teams", "sports.school_sports_team.school", "sports.school_sports_team.athletics_brand"]. Entity: ["George Washington Colonials men's basketball"].  Question: Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["George Washington University"]
+QS: [EOS]
+
+QC: Who is the performer who headlined the concert tour called Demi World Tour?
+QS: [extract_entity] Who is the performer who headlined the concert tour called Demi World Tour?
+A: ["Demi World Tour"]
+QS: [filter_relations] Entity: ["Demi World Tour"]. Question: Who is the performer who headlined the concert tour called Demi World Tour?
+A: ["music.concert_tour.artist", "music.album.release_date", "music.artist.album", "music.artist.genre", "music.recording.featured_artists", "music.album.artist", "music.album.primary_release", "music.concert_tour.album_or_release_supporting", "music.recording_contribution.contributor", "music.artist.contribution"]
+QS: [find_answer] Relation: ["music.concert_tour.artist", "music.album.release_date", "music.artist.album", "music.artist.genre", "music.recording.featured_artists", "music.album.artist", "music.album.primary_release", "music.concert_tour.album_or_release_supporting", "music.recording_contribution.contributor", "music.artist.contribution"]. Entity: ["Demi World Tour"]. Question: Who is the performer who headlined the concert tour called Demi World Tour?
+A: ["Demi Lovato"]
+QS: [EOS]

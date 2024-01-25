@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Union
 from SPARQLWrapper import SPARQLWrapper, JSON
 import json
 import urllib
@@ -6,10 +6,12 @@ from pathlib import Path
 from numpy import tri
 from tqdm import tqdm
 
+from utils.utils import add_ns, remove_ns
 
-sparql = SPARQLWrapper("http://127.0.0.1:18890/sparql")
+
+sparql = SPARQLWrapper("http://210.75.240.139:18890/sparql")
 sparql.setReturnFormat(JSON)
-ns_prefix = 'http://rdf.freebase.com/ns/'
+ns_prefix = "http://rdf.freebase.com/ns/"
 
 
 def execurte_sparql(sparql_query):
@@ -19,11 +21,16 @@ def execurte_sparql(sparql_query):
 
 
 def replace_relation_prefix(relations):
-    return [relation['relation']['value'].replace("http://rdf.freebase.com/ns/", "") for relation in relations]
+    return [
+        relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "")
+        for relation in relations
+    ]
 
 
 def replace_entities_prefix(entities):
-    return [entity['entity']['value'].replace("http://rdf.freebase.com/ns/", "") for entity in entities]
+    return [
+        entity["entity"]["value"].replace("http://rdf.freebase.com/ns/", "") for entity in entities
+    ]
 
 
 def get_tail_entity(entity_id, relation):
@@ -102,12 +109,14 @@ def get_ent_triples_by_rel(entity_id, filtered_relations):
     for relation in filtered_relations:
         if relation in out_relations:
             tail_entity_ids = get_tail_entity(entity_id, relation)
-            triples.extend([[entity_id, relation, tail_entity_id]
-                           for tail_entity_id in tail_entity_ids])
+            triples.extend(
+                [[entity_id, relation, tail_entity_id] for tail_entity_id in tail_entity_ids]
+            )
         elif relation in in_relations:
             head_entity_ids = get_head_entity(entity_id, relation)
-            triples.extend([[head_entity_id, relation, entity_id]
-                           for head_entity_id in head_entity_ids])
+            triples.extend(
+                [[head_entity_id, relation, entity_id] for head_entity_id in head_entity_ids]
+            )
         else:
             continue
 
@@ -116,35 +125,31 @@ def get_ent_triples_by_rel(entity_id, filtered_relations):
         for i in [0, -1]:
             ent_id = triple[i]
             if ent_id not in id_to_lable:
-                id_to_lable[ent_id] = id_to_name(ent_id)
+                id_to_lable[ent_id] = convert_id_to_name(ent_id)
             triple[i] = id_to_lable[ent_id]
 
     return triples, id_to_lable
 
 
-def convert_id_to_label_in_triples(triples):
-    id_to_lable = {}
+def convert_id_to_name_in_triples(triples, return_map=False):
+    id_to_label = {}
     for triple in triples:
         for i in [0, -1]:
             ent_id = triple[i]
-            if ent_id not in id_to_lable:
-                id_to_lable[ent_id] = id_to_name(ent_id)
-            triple[i] = id_to_lable[ent_id]
+            if ent_id[:2] in ['m.', 'g.']:
+                if ent_id not in id_to_label:
+                    id_to_label[ent_id] = convert_id_to_name(ent_id)
+                triple[i] = id_to_label[ent_id]
 
-    return triples
-
-
-def triples_to_str(triples):
-    for i, triple in enumerate(triples):
-        triple.append('.')
-        triples[i] = '  '.join(triple)
-    return '\n'.join(triples)
+    if return_map:
+        return triples, id_to_label
+    else:
+        return triples
 
 
-def id_to_name(entity_id):
-    if entity_id.startswith('ns:'):
-        entity_id = entity_id[3:]
-        
+def convert_id_to_name(entity_id):
+    entity_id = remove_ns(entity_id)
+
     sparql_id = """
     PREFIX ns: <http://rdf.freebase.com/ns/>
     SELECT ?tailEntity
@@ -169,7 +174,33 @@ def id_to_name(entity_id):
     if len(results["results"]["bindings"]) == 0:
         return entity_id
     else:
-        return results["results"]["bindings"][0]['tailEntity']['value']
+        return results["results"]["bindings"][0]["tailEntity"]["value"]
+
+
+def convert_label_to_id(label):
+    sparql_id = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?entity
+    WHERE {{
+        {{
+            ?entity ns:type.object.name "%s"@en .
+        }}
+        UNION
+        {{
+            ?entity ns:common.topic.alias "%s"@en .
+        }}
+    }}
+    """
+    sparql_query = sparql_id % (label, label)
+
+    sparql.setQuery(sparql_query)
+    sparql.setReturnFormat(JSON)
+    results = sparql.query().convert()
+
+    if len(results["results"]["bindings"]) == 0:
+        return None
+    else:
+        return results["results"]["bindings"][0]["entity"]["value"].replace(ns_prefix, "")
 
 
 __query_record = {}
@@ -177,87 +208,79 @@ __query_record = {}
 
 def pre_filter_relations(relations: List[str]):
     ignored_relations = [
-        'common.topic.image',
-        'common.topic.webpage'
+        "type.object.type",
+        "type.object.name",
     ]
     filtered_relations = []
     for relation in relations:
-        if relation in ignored_relations or relation.startswith('freebase'):
+        if (
+            relation in ignored_relations
+            or relation.startswith("freebase.")
+            or relation.startswith("common.")
+            or relation.startswith("kg.")
+        ):
             continue
         else:
             filtered_relations.append(relation)
     return filtered_relations
 
 
-def get_1hop_triples(entity_id):
+def get_1hop_triples(entity_ids: Union[str, List]):
+    if type(entity_ids) is str:
+        entity_ids = [entity_ids]
+
+    entity_ids = [add_ns(entity_id) for entity_id in entity_ids]
+
     triples = set()
 
-    relation_to_new_entity = {}
-
-    query1 = """
+    query = """
     PREFIX ns: <http://rdf.freebase.com/ns/>
-    SELECT DISTINCT ?x1 ?r1 WHERE {{
-        ?x1 ?r1 ns:{entity} .
-        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
+    SELECT DISTINCT ?mid ?subject ?predicate ?object WHERE {{
+        VALUES ?mid {{ {entity_ids} }}
+        {{ ?subject ?predicate ?mid }}
+        UNION
+        {{ ?mid ?predicate ?object }}
+        FILTER regex(?predicate, "http://rdf.freebase.com/ns/")
     }}
-    """.format(entity=entity_id)
+    """.format(
+        entity_ids=" ".join(entity_ids)
+    )
 
-    sparql.setQuery(query1)
+    sparql.setQuery(query)
     try:
         results = sparql.query().convert()
     except urllib.error.URLError:
-        print(query1)
+        print(query)
         exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        relation_to_new_entity[r1] = x1
-
-        triples.add((x1, r1, entity_id))
-
-    query2 = """
-    PREFIX ns: <http://rdf.freebase.com/ns/>
-    SELECT DISTINCT ?x1 ?r1 WHERE {{
-        ns:{entity} ?r1 ?x1 .
-        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
-    }}
-    """.format(entity=entity_id)
-
-    sparql.setQuery(query2)
-    try:
-        results = sparql.query().convert()
-    except urllib.error.URLError:
-        print(query2)
-        exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        relation_to_new_entity[r1] = x1
-
-        triples.add((entity_id, r1, x1))
+    
+    for result in results["results"]["bindings"]:
+        mid = result["mid"]["value"].replace(ns_prefix, "")
+        predicate = result["predicate"]["value"].replace(ns_prefix, "")
+        if "subject" in result:
+            subject = result["subject"]["value"].replace(ns_prefix, "")
+            triples.add((subject, predicate, mid))
+        elif "object" in result:
+            object = result["object"]["value"].replace(ns_prefix, "")
+            triples.add((mid, predicate, object))
 
     relations = list(set([triple[1] for triple in triples]))
     relations = pre_filter_relations(relations)
 
     triples = [list(triple) for triple in triples if triple[1] in relations]
 
-    # relation_to_new_entity = {
-    #     relation: entity for relation, entity in relation_to_new_entity.items()
-    #     if relation in relations
-    # }
-
     return triples, relations
 
 
 def get_2hop_triples(entity_id: str, one_hop_relations=None):
-    # if entity_id in __query_record:
-    #     return __query_record[entity_id]
+    entity_id = remove_ns(entity_id)
+    one_hop_relations = [remove_ns(rel) for rel in one_hop_relations]
+    one_hop_relations = pre_filter_relations(one_hop_relations)
+
     if one_hop_relations:
-        one_hop_relations = ' '.join(
-            ['ns:'+relation for relation in one_hop_relations])
-        one_hop_relations = f'VALUES ?r2 {{ {one_hop_relations} }} .'
+        one_hop_relations = " ".join(["ns:" + relation for relation in one_hop_relations])
+        one_hop_relations = f"VALUES ?r2 {{ {one_hop_relations} }} ."
     else:
-        one_hop_relations = ''
+        one_hop_relations = ""
 
     triples = set()
     query1 = """
@@ -269,7 +292,9 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
         FILTER regex(?r1, "http://rdf.freebase.com/ns/")
         FILTER regex(?r2, "http://rdf.freebase.com/ns/")
     }}
-    """.format(entity=entity_id, one_hop_relations=one_hop_relations)
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
+    )
 
     sparql.setQuery(query1)
     try:
@@ -277,11 +302,11 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     except urllib.error.URLError:
         print(query1)
         exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        x2 = result['x2']['value'].replace(ns_prefix, '')
-        r2 = result['r2']['value'].replace(ns_prefix, '')
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
 
         triples.add((x1, r1, x2))
         triples.add((x2, r2, entity_id))
@@ -297,7 +322,9 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
         FILTER regex(?r1, "http://rdf.freebase.com/ns/")
         FILTER regex(?r2, "http://rdf.freebase.com/ns/")
     }}
-    """.format(entity=entity_id, one_hop_relations=one_hop_relations)
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
+    )
 
     sparql.setQuery(query2)
     try:
@@ -305,11 +332,11 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     except urllib.error.URLError:
         print(query2)
         exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        x2 = result['x2']['value'].replace(ns_prefix, '')
-        r2 = result['r2']['value'].replace(ns_prefix, '')
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
 
         triples.add((x2, r1, x1))
         triples.add((x2, r2, entity_id))
@@ -325,7 +352,9 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
         FILTER regex(?r1, "http://rdf.freebase.com/ns/")
         FILTER regex(?r2, "http://rdf.freebase.com/ns/")
     }}
-    """.format(entity=entity_id, one_hop_relations=one_hop_relations)
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
+    )
 
     sparql.setQuery(query3)
     try:
@@ -333,11 +362,11 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     except urllib.error.URLError:
         print(query3)
         exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        x2 = result['x2']['value'].replace(ns_prefix, '')
-        r2 = result['r2']['value'].replace(ns_prefix, '')
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
 
         triples.add((x1, r1, x2))
         triples.add((entity_id, r2, x2))
@@ -353,7 +382,9 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
         FILTER regex(?r1, "http://rdf.freebase.com/ns/")
         FILTER regex(?r2, "http://rdf.freebase.com/ns/")
     }}
-    """.format(entity=entity_id, one_hop_relations=one_hop_relations)
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
+    )
 
     sparql.setQuery(query4)
     try:
@@ -361,11 +392,11 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     except urllib.error.URLError:
         print(query4)
         exit(0)
-    for result in results['results']['bindings']:
-        x1 = result['x1']['value'].replace(ns_prefix, '')
-        r1 = result['r1']['value'].replace(ns_prefix, '')
-        x2 = result['x2']['value'].replace(ns_prefix, '')
-        r2 = result['r2']['value'].replace(ns_prefix, '')
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
 
         triples.add((x2, r1, x1))
         triples.add((entity_id, r2, x2))
@@ -378,11 +409,44 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     return triples, relations
 
 
+def get_types(entity: str) -> List[str]:
+    query = (
+        """
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX : <http://rdf.freebase.com/ns/> 
+    SELECT (?x0 AS ?value) WHERE {
+    SELECT DISTINCT ?x0  WHERE {
+    """
+        ":" + entity + " :type.object.type ?x0 . "
+        """
+    }
+    }
+    """
+    )
+    # print(query)
+    sparql.setQuery(query)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query)
+        exit(0)
+    rtn = []
+    for result in results["results"]["bindings"]:
+        rtn.append(result["value"]["value"].replace("http://rdf.freebase.com/ns/", ""))
+
+    return rtn
+
+
 if __name__ == "__main__":
-    entity_id = 'm.03_dwn'
+    entity_id = ["m.0f8l9c", "m.05g2b"]
+    # print(convert_id_to_label(entity_id))
+
     triples, relations = get_1hop_triples(entity_id)
-    print(len(triples))
-    print(len(relations))
+    print(triples)
+
+    # id = convert_label_to_id("Baltimore Ravens")
+    # print(id)
 
     # relations = ['base.popstra.celebrity.dated',
     #              'base.popstra.celebrity.friendship']

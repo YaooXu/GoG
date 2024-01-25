@@ -1,0 +1,11 @@
+Given the existing triples, please generate more triples related to the problem based on your internal knowledge and reasoning ability.
+
+Q: In which time zone is Apple's headquarters located?
+Known Triples:
+Apple Inc, headquarters, Apple Park
+Apple Inc, CEO, Tim Cook
+Apple Park, located in, Cupertino
+Generated triples:
+Cupertino, located in, California
+California, time zone, Pacific Standard Time
+Apple Inc, time zone, Pacific Standard Time
