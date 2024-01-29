@@ -17,6 +17,7 @@ from datasets import load_dataset
 from utils.utils import format_prompt, read_file, proxy_load_dataset, convert_list_to_str
 from loguru import logger
 
+logger.add(sink="log", mode="w")
 load_dotenv()
 
 lock = Lock()
@@ -35,8 +36,44 @@ def convert_jsonl_to_json(jsonl_filepath):
         json.dump(output_datas, f, indent=2)
 
 
-def __find_answer(worker_idx, idxes_to_process):
-    logger.debug(f"{worker_idx}, {idxes_to_process[0]}")
+def answer_question_without_kg(env: FreeBaseEnv, prompt):
+    output = run_llm(
+        prompt,
+        args.temperature_exploration,
+        512,
+        args.opeani_api_keys,
+        args.LLM_type,
+        stop=None,
+        stream=True,
+    )
+    match = re.search("Finish(\[.*\])", output)
+    if match:
+        answers = match.group(1)
+        answers = eval(answers)
+    else:
+        answers = ["unknown"]
+    env.llm_output = output
+    return answers
+
+
+def write_results(data, preprocessed_data, env: FreeBaseEnv, answer):
+    with lock:
+        with open("./predictions.jsonl", "a") as f:
+            res = {
+                "index": data["index"],
+                "question": data["question"],
+                "prediction": answer,
+                "ground_truth": preprocessed_data["answer"],
+                "records": env.records,
+            }
+            if env.llm_output:
+                res["llm_output"] = env.llm_output
+
+            f.write(json.dumps(res) + "\n")
+
+
+def find_answer(process_idx, idxes_to_process):
+    logger.debug(f"{process_idx}, {idxes_to_process[0]}")
 
     instruction = format_prompt(read_file("prompts2/instruction"))
     example = format_prompt(read_file("prompts2/example"))
@@ -45,12 +82,12 @@ def __find_answer(worker_idx, idxes_to_process):
     for n, idx in enumerate(idxes_to_process):
         if (n + 1) % 10 == 0:
             t2 = time.time()
-            logger.debug(f"{worker_idx}: {n / (ed - st)}, {t2 - t1}")
+            logger.debug(f"{process_idx}: {n / len(idxes_to_process)}, {t2 - t1}")
             t1 = t2
 
         try:
             data = datas[idx]
-            preprocessed_data = dataset[idx]
+            preprocessed_data = dataset[data["index"]]
 
             topic_entity_names = sorted(data["topic_entity"].values())
             topic_entity_names_str = convert_list_to_str(topic_entity_names)
@@ -66,6 +103,12 @@ def __find_answer(worker_idx, idxes_to_process):
             n_calls, n_badcalls, n_expand = 0, 0, 0
             done = False
             prompt = base_prompt
+
+            if args.no_kb:
+                answers = answer_question_without_kg(env, base_prompt)
+                write_results(data, preprocessed_data, env, answers)
+                continue
+
             for _ in range(6):
                 i = len(env.records) + 1
 
@@ -76,7 +119,7 @@ def __find_answer(worker_idx, idxes_to_process):
                     args.max_length,
                     args.opeani_api_keys,
                     args.LLM_type,
-                    stop=[f"\nObservation {i}:"],
+                    [f"\nObservation {i}:"],
                 )
                 try:
                     thought, action = thought_action.strip().split(f"\nAction {i}: ")
@@ -114,6 +157,7 @@ def __find_answer(worker_idx, idxes_to_process):
                         n_expand += 1
                         if n_expand >= 3:
                             logger.debug("max n_expand, break")
+                            answers = answer_question_without_kg(env, base_prompt)
                             done = True
                     else:
                         done = True
@@ -134,24 +178,9 @@ def __find_answer(worker_idx, idxes_to_process):
 
             logger.debug(f"ground truth: {preprocessed_data['answer']}")
         except Exception as e:
-            print(e)
+            logger.error(f'{e}')
 
-
-def write_results(data, preprocessed_data, env, answer):
-    with lock:
-        with open("./predictions.jsonl", "a") as f:
-            f.write(
-                json.dumps(
-                    {
-                        "index": data["index"],
-                        "question": data["question"],
-                        "prediction": answer,
-                        "ground_truth": preprocessed_data["answer"],
-                        "records": env.records,
-                    }
-                )
-                + "\n"
-            )
+    logger.info(f"{process_idx} finished")
 
 
 if __name__ == "__main__":
@@ -177,7 +206,7 @@ if __name__ == "__main__":
         "--remove_unnecessary_rel",
         type=bool,
         default=True,
-        help="whether removing unnecessary relations.",
+        help="whether rem6oving unnecessary relations.",
     )
     parser.add_argument(
         "--LLM_type", type=str, default="gpt-3.5-turbo-0613", help="base LLM model."
@@ -202,6 +231,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--n_process", type=int, default=1)
+    parser.add_argument("--no_kb", action="store_true")
 
     args = parser.parse_args()
 
@@ -235,6 +265,7 @@ if __name__ == "__main__":
     logger.debug(n_process)
 
     # random.shuffle(idxes_to_process)
+    # idxes_to_process = [52]
 
     if n_process > 1:
         with Pool(processes=n_process) as pool:
@@ -248,8 +279,8 @@ if __name__ == "__main__":
 
                 st = ed
 
-            results = pool.starmap(__find_answer, jobs)
+            results = pool.starmap(find_answer, jobs)
     else:
-        __find_answer(0, idxes_to_process)
+        find_answer(0, idxes_to_process)
 
     convert_jsonl_to_json("./predictions.jsonl")

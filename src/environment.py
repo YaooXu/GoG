@@ -8,8 +8,9 @@ from kb_interface.freebase_interface import (
     convert_label_to_id,
     get_1hop_triples,
     get_2hop_triples,
+    get_types,
 )
-from utils.bm25 import BM25Retrieve, retrieve_ids_by_labels
+from utils.bm25 import BM25Retrieve, retrieve_id2types_by_names
 from utils.utils import format_prompt, read_file, shorten_relation, convert_triples_to_str
 from llms import run_llm
 
@@ -24,21 +25,26 @@ class FreeBaseEnv:
         self.triples = []
         self.abbr_rel_to_rel = {}
 
-        self.id_to_label = {}
+        self.id_to_name = {}
         self.name_to_id = {}
 
         self.update_id_to_name(topic_entities)
 
         self.doc_to_vec = spacy.load("en_core_web_lg")
 
+        self.explored_entities = set()
+        
+        # only used in answer without kg
+        self.llm_output = None
+
     def update_name_to_id(self, name_to_id):
         name_to_id = {name.lower(): id for name, id in name_to_id.items()}
         self.name_to_id.update(name_to_id)
-        self.id_to_label.update({id: label for label, id in name_to_id.items()})
+        self.id_to_name.update({id: label for label, id in name_to_id.items()})
 
     def update_id_to_name(self, id_to_name):
         id_to_name = {id: name.lower() for id, name in id_to_name.items()}
-        self.id_to_label.update(id_to_name)
+        self.id_to_name.update(id_to_name)
         self.name_to_id.update({label: id for id, label in id_to_name.items()})
 
     def convert_records_to_str(self):
@@ -153,60 +159,16 @@ class FreeBaseEnv:
 
         new_entities = set()
         for triple in all_related_triples:
-            new_entities.add(triple[0])
-            new_entities.add(triple[2])
-        new_entities -= set(entity_names)
+            if triple[0] in self.name_to_id:
+                new_entities.add(triple[0])
+            if triple[2] in self.name_to_id:
+                new_entities.add(triple[2])
+        new_entities -= self.explored_entities
         self.records[-1]["new_entities"] = list(new_entities)
 
+        self.explored_entities.update(new_entities)
+
         return convert_triples_to_str(all_related_triples)
-
-    def expand(self):
-        # from one-hop to two hop
-        entity_names = self.records[-2]["entity_names"]
-        one_hop_relations = self.records[-2]["one_hop_relations"]
-
-        all_triples, all_relations = [], []
-
-        for entity_name in entity_names:
-            id = self.convert_name_to_id(entity_name)
-            triples, relations = get_2hop_triples(
-                id, [self.abbr_rel_to_rel[rel] for rel in one_hop_relations]
-            )
-
-            all_triples.extend(triples)
-            all_relations.extend(relations)
-
-        for i in range(len(all_relations)):
-            # only remain the last two parts
-            abbr_rel = shorten_relation(all_relations[i])
-            self.abbr_rel_to_rel[abbr_rel] = all_relations[i]
-            all_relations[i] = abbr_rel
-
-        # drop relations that have been considered
-        relations = list(set(all_relations) - set(one_hop_relations))
-        relations = sorted(relations)
-
-        two_hop_relations = self.filter_relations(entity_names, relations, self.last_thought)
-        self.records[-1]["two_hop_relations"] = two_hop_relations
-
-        for i in range(len(all_triples)):
-            abbr_rel = shorten_relation(all_triples[i][1])
-            self.abbr_rel_to_rel[abbr_rel] = all_triples[i][1]
-            all_triples[i][1] = abbr_rel
-
-        related_triples = self.sample_triples_by_relation(
-            all_triples, one_hop_relations + two_hop_relations
-        )
-
-        related_triples, id_to_label = convert_id_to_name_in_triples(
-            related_triples, return_map=True
-        )
-        self.update_id_to_name(id_to_label)
-
-        related_triples = sorted(related_triples)
-        self.records[-1]["triples"] = related_triples
-
-        return convert_triples_to_str(related_triples)
 
     def filter_relations(self, entity_name, relations, thought):
         # logger.debug(f"{thought}\n{entity_name}")
@@ -214,6 +176,7 @@ class FreeBaseEnv:
         prompt_path = read_file("prompts2/primitive_tasks/filter_relations")
         prompt = format_prompt(prompt_path)
         relations = sorted(relations)
+        # logger.debug(f"original relations {relations}")
 
         prompt = (
             prompt + f"Thought: {thought}\n"
@@ -233,6 +196,34 @@ class FreeBaseEnv:
         filtered_relations = [rel.strip() for rel in filtered_relations.split(",")]
 
         return filtered_relations
+
+    def select_entity_id_by_types(self, question, entity_name, id_to_types):
+        # logger.debug(f"{thought}\n{entity_name}")
+
+        prompt_path = read_file("prompts2/primitive_tasks/select_entity")
+        prompt = format_prompt(prompt_path)
+
+        id_to_types = dict(sorted(id_to_types.items(), key=lambda x: len(x[-1]), reverse=True))
+        candidite_entities = [f"{k}: {str(v)}" for k, v in id_to_types.items()]
+        candidite_entities = "\n".join(candidite_entities)
+
+        prompt = (
+            prompt + f"Thought: {question}\n"
+            f"Entity Name: {entity_name}\n"
+            f"Candidate Entities:\n{candidite_entities}\n"
+            f"Answer: "
+        )
+
+        entity_id = run_llm(
+            prompt,
+            self.args.temperature_exploration,
+            self.args.max_length,
+            self.args.opeani_api_keys,
+            self.args.LLM_type,
+            stop="\n",
+        )
+
+        return entity_id
 
     def sample_triples_by_relation(self, triples, filtered_relations):
         # only remain related triples
@@ -259,7 +250,7 @@ class FreeBaseEnv:
                 entity_id = self.name_to_id[entity_name.lower()]
 
         if not entity_id:
-            if self.records[-1]["i"] == 1:
+            if self.records[-1]["i"] == 1 and len(self.name_to_id):
                 logger.debug("first search, select most similar entities from topic entities")
                 vec1 = self.doc_to_vec(entity_name)
                 mid_to_sim = {}
@@ -268,16 +259,77 @@ class FreeBaseEnv:
                     sim = vec1.similarity(vec2)
                     mid_to_sim[id] = sim
                 mids = sorted(mid_to_sim.keys(), key=lambda x: mid_to_sim[x], reverse=True)
-                logger.debug(f"{self.id_to_label[mids[0]]}")
+                logger.debug(f"{self.id_to_name[mids[0]]}")
                 return mids[0]
 
             else:
                 # not in explored graph, may be generated by LLM
+                logger.debug(f"generated entity: {entity_name}")
 
-                # TODO: default first one
-                entity_id = retrieve_ids_by_labels([entity_name], self.last_thought)["ids"][0][0]
-                logger.debug(f"generated entity: {entity_id}")
-
+                id_to_types = retrieve_id2types_by_names(entity_name)
+                entity_id = self.select_entity_id_by_types(
+                    self.last_thought, entity_name, id_to_types
+                )
                 self.update_name_to_id({entity_name: entity_id})
 
         return entity_id
+
+    # def expand(self):
+    #     # from one-hop to two hop
+    #     entity_names = self.records[-2]["entity_names"]
+    #     one_hop_relations = self.records[-2]["one_hop_relations"]
+
+    #     all_triples, all_relations = [], []
+
+    #     for entity_name in entity_names:
+    #         id = self.convert_name_to_id(entity_name)
+    #         triples, relations = get_2hop_triples(
+    #             id, [self.abbr_rel_to_rel[rel] for rel in one_hop_relations]
+    #         )
+
+    #         all_triples.extend(triples)
+    #         all_relations.extend(relations)
+
+    #     for i in range(len(all_relations)):
+    #         # only remain the last two parts
+    #         abbr_rel = shorten_relation(all_relations[i])
+    #         self.abbr_rel_to_rel[abbr_rel] = all_relations[i]
+    #         all_relations[i] = abbr_rel
+
+    #     # drop relations that have been considered
+    #     relations = list(set(all_relations) - set(one_hop_relations))
+    #     relations = sorted(relations)
+
+    #     two_hop_relations = self.filter_relations(entity_names, relations, self.last_thought)
+    #     self.records[-1]["two_hop_relations"] = two_hop_relations
+
+    #     for i in range(len(all_triples)):
+    #         abbr_rel = shorten_relation(all_triples[i][1])
+    #         self.abbr_rel_to_rel[abbr_rel] = all_triples[i][1]
+    #         all_triples[i][1] = abbr_rel
+
+    #     related_triples = self.sample_triples_by_relation(
+    #         all_triples, one_hop_relations + two_hop_relations
+    #     )
+
+    #     related_triples, id_to_label = convert_id_to_name_in_triples(
+    #         related_triples, return_map=True
+    #     )
+    #     self.update_id_to_name(id_to_label)
+
+    #     related_triples = sorted(related_triples)
+    #     self.records[-1]["triples"] = related_triples
+
+    #     return convert_triples_to_str(related_triples)
+
+
+if __name__ == "__main__":
+    ids = retrieve_id2types_by_names(
+        ["Libya"],
+        'Based on the given observation, "Libya, Libya, Libya" is the national anthem of Libya. Now I need to find out who is the leader of Libya.',
+    )
+    print(ids)
+
+    for id in ids:
+        print(id)
+        print(get_types(id))

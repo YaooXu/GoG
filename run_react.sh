@@ -1,0 +1,1 @@
+python src/ReAct.py --n_process 8 >> log

@@ -253,15 +253,14 @@ class BM25Retrieve:
         return selected_mids
 
 
-def retrieve_ids_by_labels(labels, question):
+def retrieve_id2types_by_names(label):
     url = "http://210.75.240.139:18891/label2id"
     data = {
-        "labels": labels,
-        "question": question,
+        "labels": [label],
     }
     response = requests.post(url, json=data)
-
-    return response.json()
+    # print(response.json())
+    return response.json()['all_mid_to_types'][0]
 
 
 if __name__ == "__main__":

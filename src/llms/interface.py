@@ -12,6 +12,7 @@ def run_llm(
     opeani_api_keys=None,
     engine="gpt-3.5-turbo",
     stop="\n",
+    stream=False,
 ):
     if "llama" in engine.lower():
         openai.api_key = "EMPTY"
@@ -23,7 +24,7 @@ def run_llm(
         openai.api_key = opeani_api_keys
 
     messages = [
-        {"role": "system", "content": "You are an AI assistant that helps people find information."}
+        {"role": "system", "content": "You are an AI assistant that answers complex questions."}
     ]
     message_prompt = {"role": "user", "content": prompt}
     messages.append(message_prompt)
@@ -36,13 +37,23 @@ def run_llm(
                 temperature=temperature,
                 max_tokens=max_tokens,
                 stop=stop,
+                stream=stream,
             )
-            result = response["choices"][0]["message"]["content"]
+            if not stream:
+                result = response["choices"][0]["message"]["content"]
+            else:
+                result = ""
+                for i in response:
+                    try:
+                        result += i["choices"][0]["delta"]["content"]
+                    except Exception as e:
+                        break
+
             f = 1
         except Exception as e:
             print(e)
-            if 'maximum context length' in str(e):
-                return None
+            if "maximum context length" in str(e):
+                messages[-1]["content"] = messages[-1]["content"][4000:]
             print("openai error, retry")
             time.sleep(2)
     return result

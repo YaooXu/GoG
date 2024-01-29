@@ -1,12 +1,11 @@
 import argparse
 
-from dotenv import load_dotenv
+import sys
+sys.path.append("src")
 
 from utils.utils import read_json
 import json
 import re
-
-load_dotenv()
 
 
 def prepare_dataset_for_eval(dataset_name, output_file):
@@ -171,7 +170,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", type=str, default="cwq_train_dev", help="choose the dataset.")
     parser.add_argument(
-        "--output_file", type=str, default="predictions-C.json", help="the output file name."
+        "--output_file", type=str, default="predictions.json", help="the output file name."
     )
     parser.add_argument(
         "--constraints_refuse",
@@ -188,7 +187,7 @@ if __name__ == "__main__":
     num_error = 0
     for data in output_datas:
         answers = data["ground_truth"]
-        results = ', '.join(data["prediction"])
+        results = ", ".join(data["prediction"])
         if exact_match(results, answers):
             num_right += 1
         else:

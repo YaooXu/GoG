@@ -136,7 +136,7 @@ def convert_id_to_name_in_triples(triples, return_map=False):
     for triple in triples:
         for i in [0, -1]:
             ent_id = triple[i]
-            if ent_id[:2] in ['m.', 'g.']:
+            if ent_id[:2] in ["m.", "g."]:
                 if ent_id not in id_to_label:
                     id_to_label[ent_id] = convert_id_to_name(ent_id)
                 triple[i] = id_to_label[ent_id]
@@ -252,7 +252,7 @@ def get_1hop_triples(entity_ids: Union[str, List]):
     except urllib.error.URLError:
         print(query)
         exit(0)
-    
+
     for result in results["results"]["bindings"]:
         mid = result["mid"]["value"].replace(ns_prefix, "")
         predicate = result["predicate"]["value"].replace(ns_prefix, "")
@@ -409,22 +409,20 @@ def get_2hop_triples(entity_id: str, one_hop_relations=None):
     return triples, relations
 
 
-def get_types(entity: str) -> List[str]:
-    query = (
-        """
+def get_types(entity_id: str) -> List[str]:
+    query = """
     PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
     PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
-    PREFIX : <http://rdf.freebase.com/ns/> 
-    SELECT (?x0 AS ?value) WHERE {
-    SELECT DISTINCT ?x0  WHERE {
-    """
-        ":" + entity + " :type.object.type ?x0 . "
-        """
-    }
-    }
-    """
+    PREFIX ns: <http://rdf.freebase.com/ns/> 
+    SELECT (?x0 AS ?value) WHERE {{
+    SELECT DISTINCT ?x0  WHERE {{
+        ns:{entity_id} ns:type.object.type ?x0 . 
+    }}
+    }}
+    """.format(
+        entity_id=entity_id
     )
-    # print(query)
+
     sparql.setQuery(query)
     try:
         results = sparql.query().convert()
