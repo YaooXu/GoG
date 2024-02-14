@@ -6,7 +6,7 @@ Upon successfully installing all the necessary configurations, you can proceed t
 python main_freebase.py \  # if you wanna use Wikidata as KG source, run main_wiki.py
 --dataset cwq \ # dataset your wanna test, see ToG/data/README.md
 --max_length 256 \ 
---temperature_exploration 0.4 \ # the temperature in exploration stage.
+--temperature 0.4 \ # the temperature in exploration stage.
 --temperature_reasoning 0 \ # the temperature in reasoning stage.
 --width 3 \ # choose the search width of ToG, 3 is the default setting.
 --depth 3 \ # choose the search depth of ToG, 3 is the default setting.

@@ -1,327 +1,459 @@
+from typing import List, Tuple, Union
 from SPARQLWrapper import SPARQLWrapper, JSON
-from utils.utils import *
+import json
+import urllib
+from pathlib import Path
+from numpy import tri
+from tqdm import tqdm
 
-SPARQLPATH = "http://210.75.240.139:18890/sparql"  # depend on your own internal address and port, shown in Freebase folder's readme.md
-
-# pre-defined sparqls
-sparql_head_relations = (
-    """\nPREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT ?relation\nWHERE {\n  ns:%s ?relation ?x .\n}"""
-)
-sparql_tail_relations = (
-    """\nPREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT ?relation\nWHERE {\n  ?x ?relation ns:%s .\n}"""
-)
-sparql_tail_entities_extract = (
-    """PREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT ?tailEntity\nWHERE {\nns:%s ns:%s ?tailEntity .\n}"""
-)
-sparql_head_entities_extract = (
-    """PREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT ?tailEntity\nWHERE {\n?tailEntity ns:%s ns:%s  .\n}"""
-)
-sparql_id = """PREFIX ns: <http://rdf.freebase.com/ns/>\nSELECT DISTINCT ?tailEntity\nWHERE {\n  {\n    ?entity ns:type.object.name ?tailEntity .\n    FILTER(?entity = ns:%s)\n  }\n  UNION\n  {\n    ?entity <http://www.w3.org/2002/07/owl#sameAs> ?tailEntity .\n    FILTER(?entity = ns:%s)\n  }\n}"""
+from utils import add_ns, remove_ns
 
 
-def check_end_word(s):
-    words = [" ID", " code", " number", "instance of", "website", "URL", "inception", "image", " rate", " count"]
-    return any(s.endswith(word) for word in words)
-
-
-def abandon_rels(relation):
-    if (
-        relation == "type.object.type"
-        or relation == "type.object.name"
-        or relation.startswith("common.")
-        or relation.startswith("freebase.")
-        or "sameAs" in relation
-    ):
-        return True
+sparql = SPARQLWrapper("http://210.75.240.139:18890/sparql")
+sparql.setReturnFormat(JSON)
+ns_prefix = "http://rdf.freebase.com/ns/"
 
 
 def execurte_sparql(sparql_query):
-    sparql = SPARQLWrapper(SPARQLPATH)
     sparql.setQuery(sparql_query)
-    sparql.setReturnFormat(JSON)
     results = sparql.query().convert()
     return results["results"]["bindings"]
 
 
 def replace_relation_prefix(relations):
-    return [relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "") for relation in relations]
+    return [
+        relation["relation"]["value"].replace("http://rdf.freebase.com/ns/", "")
+        for relation in relations
+    ]
 
 
 def replace_entities_prefix(entities):
-    return [entity["tailEntity"]["value"].replace("http://rdf.freebase.com/ns/", "") for entity in entities]
+    return [
+        entity["entity"]["value"].replace("http://rdf.freebase.com/ns/", "") for entity in entities
+    ]
 
 
-def id2entity_name_or_type(entity_id):
+def get_tail_entity(entity_id, relation):
+    sparql_pattern = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?entity
+    WHERE {{
+        ns:{head} ns:{relation} ?entity .
+    }}
+    """
+    sparql_text = sparql_pattern.format(head=entity_id, relation=relation)
+    entities = execurte_sparql(sparql_text)
+
+    entities = replace_entities_prefix(entities)
+    entity_ids = [entity for entity in entities if entity.startswith("m.")]
+
+    return entity_ids
+
+
+def get_head_entity(entity_id, relation):
+    sparql_pattern = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?entity
+    WHERE {{
+        ?entity ns:{relation} ns:{tail}  .
+    }}
+    """
+    sparql_text = sparql_pattern.format(tail=entity_id, relation=relation)
+    entities = execurte_sparql(sparql_text)
+
+    entities = replace_entities_prefix(entities)
+    entity_ids = [entity for entity in entities if entity.startswith("m.")]
+
+    return entity_ids
+
+
+def get_out_relations(entity_id):
+    sparql_pattern = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?relation
+    WHERE {{
+        ns:{head} ?relation ?x .
+    }}
+    """
+    sparql_text = sparql_pattern.format(head=entity_id)
+    relations = execurte_sparql(sparql_text)
+
+    relations = replace_relation_prefix(relations)
+
+    return relations
+
+
+def get_in_relations(entity_id):
+    sparql_pattern = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?relation
+    WHERE {{
+        ?x ?relation ns:{tail} .
+    }}"""
+    sparql_text = sparql_pattern.format(tail=entity_id)
+    relations = execurte_sparql(sparql_text)
+
+    relations = replace_relation_prefix(relations)
+
+    return relations
+
+
+def get_ent_triples_by_rel(entity_id, filtered_relations):
+    out_relations = get_out_relations(entity_id)
+    out_relations = list(set(out_relations))
+
+    in_relations = get_in_relations(entity_id)
+    in_relations = list(set(in_relations))
+
+    triples = []
+    for relation in filtered_relations:
+        if relation in out_relations:
+            tail_entity_ids = get_tail_entity(entity_id, relation)
+            triples.extend(
+                [[entity_id, relation, tail_entity_id] for tail_entity_id in tail_entity_ids]
+            )
+        elif relation in in_relations:
+            head_entity_ids = get_head_entity(entity_id, relation)
+            triples.extend(
+                [[head_entity_id, relation, entity_id] for head_entity_id in head_entity_ids]
+            )
+        else:
+            continue
+
+    id_to_lable = {}
+    for triple in triples:
+        for i in [0, -1]:
+            ent_id = triple[i]
+            if ent_id not in id_to_lable:
+                id_to_lable[ent_id] = convert_id_to_name(ent_id)
+            triple[i] = id_to_lable[ent_id]
+
+    return triples, id_to_lable
+
+
+def convert_id_to_name_in_triples(triples, return_map=False):
+    id_to_label = {}
+    for triple in triples:
+        for i in [0, -1]:
+            ent_id = triple[i]
+            if ent_id[:2] in ["m.", "g."]:
+                if ent_id not in id_to_label:
+                    id_to_label[ent_id] = convert_id_to_name(ent_id)
+                triple[i] = id_to_label[ent_id]
+
+    if return_map:
+        return triples, id_to_label
+    else:
+        return triples
+
+
+def convert_id_to_name(entity_id):
+    entity_id = remove_ns(entity_id)
+
+    sparql_id = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?tailEntity
+    WHERE {{
+        {{
+            ?entity ns:type.object.name ?tailEntity .
+            FILTER(?entity = ns:%s)
+        }}
+        UNION
+        {{
+            ?entity ns:common.topic.alias ?tailEntity .
+            FILTER(?entity = ns:%s)
+        }}
+    }}
+    """
     sparql_query = sparql_id % (entity_id, entity_id)
-    sparql = SPARQLWrapper(SPARQLPATH)
+
     sparql.setQuery(sparql_query)
     sparql.setReturnFormat(JSON)
     results = sparql.query().convert()
+
     if len(results["results"]["bindings"]) == 0:
-        return "UnName_Entity"
+        return entity_id
     else:
         return results["results"]["bindings"][0]["tailEntity"]["value"]
 
 
-from freebase_func import *
-from prompt_list import *
-import json
-import time
-import openai
-import re
-from prompt_list import *
+def convert_name_to_id(label):
+    sparql_id = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT ?entity
+    WHERE {{
+        {{
+            ?entity ns:type.object.name "%s"@en .
+        }}
+        UNION
+        {{
+            ?entity ns:common.topic.alias "%s"@en .
+        }}
+    }}
+    """
+    sparql_query = sparql_id % (label, label)
 
-# from rank_bm25 import BM25Okapi
-# from sentence_transformers import util
-# from sentence_transformers import SentenceTransformer
+    sparql.setQuery(sparql_query)
+    sparql.setReturnFormat(JSON)
+    results = sparql.query().convert()
+
+    if len(results["results"]["bindings"]) == 0:
+        return label
+    else:
+        return results["results"]["bindings"][0]["entity"]["value"].replace(ns_prefix, "")
 
 
-def clean_relations(string, entity_id, head_relations):
-    pattern = r"{\s*(?P<relation>[^()]+)\s+\(Score:\s+(?P<score>[0-9.]+)\)}"
-    relations = []
-    for match in re.finditer(pattern, string):
-        relation = match.group("relation").strip()
-        if ";" in relation:
+__query_record = {}
+
+
+def pre_filter_relations(relations: List[str]):
+    ignored_relations = [
+        "type.object.type",
+        "type.object.name",
+    ]
+    filtered_relations = []
+    for relation in relations:
+        if (
+            relation in ignored_relations
+            or relation.startswith("freebase.")
+            or relation.startswith("common.")
+            or relation.startswith("kg.")
+        ):
             continue
-        score = match.group("score")
-        if not relation or not score:
-            return False, "output uncompleted.."
-        try:
-            score = float(score)
-        except ValueError:
-            return False, "Invalid score"
-        if relation in head_relations:
-            relations.append({"entity": entity_id, "relation": relation, "score": score, "head": True})
         else:
-            relations.append({"entity": entity_id, "relation": relation, "score": score, "head": False})
-    if not relations:
-        return False, "No relations found"
-    return True, relations
+            filtered_relations.append(relation)
+    return filtered_relations
 
 
-def if_all_zero(topn_scores):
-    return all(score == 0 for score in topn_scores)
+def get_1hop_triples(entity_ids: Union[str, List]):
+    if type(entity_ids) is str:
+        entity_ids = [entity_ids]
 
+    entity_ids = [add_ns(entity_id) for entity_id in entity_ids]
 
-def clean_relations_bm25_sent(topn_relations, topn_scores, entity_id, head_relations):
-    relations = []
-    if if_all_zero(topn_scores):
-        topn_scores = [float(1 / len(topn_scores))] * len(topn_scores)
-    i = 0
-    for relation in topn_relations:
-        if relation in head_relations:
-            relations.append({"entity": entity_id, "relation": relation, "score": topn_scores[i], "head": True})
-        else:
-            relations.append({"entity": entity_id, "relation": relation, "score": topn_scores[i], "head": False})
-        i += 1
-    return True, relations
+    triples = set()
 
-
-def construct_relation_prune_prompt(question, entity_name, total_relations, args):
-    return (
-        extract_relation_prompt % (args.width, args.width)
-        + question
-        + "\nTopic Entity: "
-        + entity_name
-        + "\nRelations: "
-        + "; ".join(total_relations)
-        + "\nA: "
+    query = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT DISTINCT ?mid ?subject ?predicate ?object WHERE {{
+        VALUES ?mid {{ {entity_ids} }}
+        {{ ?subject ?predicate ?mid }}
+        UNION
+        {{ ?mid ?predicate ?object }}
+        FILTER regex(?predicate, "http://rdf.freebase.com/ns/")
+    }}
+    """.format(
+        entity_ids=" ".join(entity_ids)
     )
 
+    sparql.setQuery(query)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query)
+        exit(0)
 
-def construct_entity_score_prompt(question, relation, entity_candidates):
-    return score_entity_candidates_prompt.format(question, relation) + "; ".join(entity_candidates) + "\nScore: "
+    for result in results["results"]["bindings"]:
+        mid = result["mid"]["value"].replace(ns_prefix, "")
+        predicate = result["predicate"]["value"].replace(ns_prefix, "")
+        if "subject" in result:
+            subject = result["subject"]["value"].replace(ns_prefix, "")
+            triples.add((subject, predicate, mid))
+        elif "object" in result:
+            object = result["object"]["value"].replace(ns_prefix, "")
+            triples.add((mid, predicate, object))
+
+    relations = list(set([triple[1] for triple in triples]))
+    relations = pre_filter_relations(relations)
+
+    triples = [list(triple) for triple in triples if triple[1] in relations]
+
+    return triples, relations
 
 
-def relation_search_prune(entity_id, entity_name, pre_relations, pre_head, question, args):
-    sparql_relations_extract_head = sparql_head_relations % (entity_id)
-    head_relations = execurte_sparql(sparql_relations_extract_head)
-    head_relations = replace_relation_prefix(head_relations)
+def get_2hop_triples(entity_id: str, one_hop_relations=None):
+    entity_id = remove_ns(entity_id)
+    one_hop_relations = [remove_ns(rel) for rel in one_hop_relations]
+    one_hop_relations = pre_filter_relations(one_hop_relations)
 
-    sparql_relations_extract_tail = sparql_tail_relations % (entity_id)
-    tail_relations = execurte_sparql(sparql_relations_extract_tail)
-    tail_relations = replace_relation_prefix(tail_relations)
-
-    if args.remove_unnecessary_rel:
-        head_relations = [relation for relation in head_relations if not abandon_rels(relation)]
-        tail_relations = [relation for relation in tail_relations if not abandon_rels(relation)]
-
-    if pre_head:
-        tail_relations = list(set(tail_relations) - set(pre_relations))
+    if one_hop_relations:
+        one_hop_relations = " ".join(["ns:" + relation for relation in one_hop_relations])
+        one_hop_relations = f"VALUES ?r2 {{ {one_hop_relations} }} ."
     else:
-        head_relations = list(set(head_relations) - set(pre_relations))
+        one_hop_relations = ""
 
-    head_relations = list(set(head_relations))
-    tail_relations = list(set(tail_relations))
-    total_relations = head_relations + tail_relations
-    total_relations.sort()  # make sure the order in prompt is always equal
-
-    print(len(total_relations))
-
-    if args.prune_tools == "llm":
-        prompt = construct_relation_prune_prompt(question, entity_name, total_relations, args)
-
-        result = run_llm(prompt, args.temperature_exploration, args.max_length, args.opeani_api_keys, args.LLM_type)
-        print(result)
-
-        flag, retrieve_relations_with_scores = clean_relations(result, entity_id, head_relations)
-
-    elif args.prune_tools == "bm25":
-        topn_relations, topn_scores = compute_bm25_similarity(question, total_relations, args.width)
-        flag, retrieve_relations_with_scores = clean_relations_bm25_sent(
-            topn_relations, topn_scores, entity_id, head_relations
-        )
-    else:
-        model = SentenceTransformer("sentence-transformers/msmarco-distilbert-base-tas-b")
-        topn_relations, topn_scores = retrieve_top_docs(question, total_relations, model, args.width)
-        flag, retrieve_relations_with_scores = clean_relations_bm25_sent(
-            topn_relations, topn_scores, entity_id, head_relations
-        )
-
-    if flag:
-        return retrieve_relations_with_scores
-    else:
-        return []  # format error or too small max_length
-
-
-def entity_search(entity, relation, head=True):
-    if head:
-        tail_entities_extract = sparql_tail_entities_extract % (entity, relation)
-        entities = execurte_sparql(tail_entities_extract)
-    else:
-        head_entities_extract = sparql_head_entities_extract % (relation, entity)
-        entities = execurte_sparql(head_entities_extract)
-
-    entity_ids = replace_entities_prefix(entities)
-    new_entity = [entity for entity in entity_ids if entity.startswith("m.")]
-    return new_entity
-
-
-def entity_score(question, entity_candidates_id, score, relation, args):
-    entity_candidates = [id2entity_name_or_type(entity_id) for entity_id in entity_candidates_id]
-    if all_unknown_entity(entity_candidates):
-        return [1 / len(entity_candidates) * score] * len(entity_candidates), entity_candidates, entity_candidates_id
-    entity_candidates = del_unknown_entity(entity_candidates)
-    if len(entity_candidates) == 1:
-        return [score], entity_candidates, entity_candidates_id
-    if len(entity_candidates) == 0:
-        return [0.0], entity_candidates, entity_candidates_id
-
-    # make sure the id and entity are in the same order
-    zipped_lists = sorted(zip(entity_candidates, entity_candidates_id))
-    entity_candidates, entity_candidates_id = zip(*zipped_lists)
-    entity_candidates = list(entity_candidates)
-    entity_candidates_id = list(entity_candidates_id)
-    if args.prune_tools == "llm":
-        prompt = construct_entity_score_prompt(question, relation, entity_candidates)
-
-        result = run_llm(prompt, args.temperature_exploration, args.max_length, args.opeani_api_keys, args.LLM_type)
-        # print(result)
-        return (
-            [float(x) * score for x in clean_scores(result, entity_candidates)],
-            entity_candidates,
-            entity_candidates_id,
-        )
-
-    elif args.prune_tools == "bm25":
-        topn_entities, topn_scores = compute_bm25_similarity(question, entity_candidates, args.width)
-    else:
-        model = SentenceTransformer("sentence-transformers/msmarco-distilbert-base-tas-b")
-        topn_entities, topn_scores = retrieve_top_docs(question, entity_candidates, model, args.width)
-    if if_all_zero(topn_scores):
-        topn_scores = [float(1 / len(topn_scores))] * len(topn_scores)
-    return [float(x) * score for x in topn_scores], topn_entities, entity_candidates_id
-
-
-def update_history(
-    entity_candidates,
-    entity,
-    scores,
-    entity_candidates_id,
-    total_candidates,
-    total_scores,
-    total_relations,
-    total_entities_id,
-    total_topic_entities,
-    total_head,
-):
-    if len(entity_candidates) == 0:
-        entity_candidates.append("[FINISH]")
-        entity_candidates_id = ["[FINISH_ID]"]
-    candidates_relation = [entity["relation"]] * len(entity_candidates)
-    topic_entities = [entity["entity"]] * len(entity_candidates)
-    head_num = [entity["head"]] * len(entity_candidates)
-    total_candidates.extend(entity_candidates)
-    total_scores.extend(scores)
-    total_relations.extend(candidates_relation)
-    total_entities_id.extend(entity_candidates_id)
-    total_topic_entities.extend(topic_entities)
-    total_head.extend(head_num)
-    return total_candidates, total_scores, total_relations, total_entities_id, total_topic_entities, total_head
-
-
-def half_stop(question, cluster_chain_of_entities, depth, args):
-    print("No new knowledge added during search depth %d, stop searching." % depth)
-    answer = generate_answer(question, cluster_chain_of_entities, args)
-    save_2_jsonl(question, answer, cluster_chain_of_entities, file_name=args.dataset)
-
-
-def generate_answer(question, cluster_chain_of_entities, args):
-    prompt = answer_prompt + question + "\n"
-    chain_prompt = "\n".join(
-        [", ".join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist]
-    )
-    prompt += "\nKnowledge Triplets: " + chain_prompt + "A: "
-    result = run_llm(prompt, args.temperature_reasoning, args.max_length, args.opeani_api_keys, args.LLM_type)
-    return result
-
-
-def entity_prune(
-    total_entities_id, total_relations, total_candidates, total_topic_entities, total_head, total_scores, args
-):
-    zipped = list(
-        zip(total_entities_id, total_relations, total_candidates, total_topic_entities, total_head, total_scores)
-    )
-    sorted_zipped = sorted(zipped, key=lambda x: x[5], reverse=True)
-    sorted_entities_id, sorted_relations, sorted_candidates, sorted_topic_entities, sorted_head, sorted_scores = (
-        [x[0] for x in sorted_zipped],
-        [x[1] for x in sorted_zipped],
-        [x[2] for x in sorted_zipped],
-        [x[3] for x in sorted_zipped],
-        [x[4] for x in sorted_zipped],
-        [x[5] for x in sorted_zipped],
+    triples = set()
+    query1 = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT DISTINCT ?x1 ?r1 ?x2 ?r2 WHERE {{
+        ?x1 ?r1 ?x2 .
+        ?x2 ?r2 ns:{entity} .
+        {one_hop_relations}
+        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
+        FILTER regex(?r2, "http://rdf.freebase.com/ns/")
+    }}
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
     )
 
-    entities_id, relations, candidates, topics, heads, scores = (
-        sorted_entities_id[: args.width],
-        sorted_relations[: args.width],
-        sorted_candidates[: args.width],
-        sorted_topic_entities[: args.width],
-        sorted_head[: args.width],
-        sorted_scores[: args.width],
+    sparql.setQuery(query1)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query1)
+        exit(0)
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
+
+        triples.add((x1, r1, x2))
+        triples.add((x2, r2, entity_id))
+
+    # print(len(triples))
+
+    query2 = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT DISTINCT ?x1 ?r1 ?x2 ?r2 WHERE {{
+        ?x2 ?r1 ?x1 .
+        ?x2 ?r2 ns:{entity} .
+        {one_hop_relations}
+        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
+        FILTER regex(?r2, "http://rdf.freebase.com/ns/")
+    }}
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
     )
-    merged_list = list(zip(entities_id, relations, candidates, topics, heads, scores))
-    filtered_list = [(id, rel, ent, top, hea, score) for id, rel, ent, top, hea, score in merged_list if score != 0]
-    if len(filtered_list) == 0:
-        return False, [], [], [], []
-    entities_id, relations, candidates, tops, heads, scores = map(list, zip(*filtered_list))
 
-    tops = [id2entity_name_or_type(entity_id) for entity_id in tops]
-    cluster_chain_of_entities = [[(tops[i], relations[i], candidates[i]) for i in range(len(candidates))]]
-    return True, cluster_chain_of_entities, entities_id, relations, heads
+    sparql.setQuery(query2)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query2)
+        exit(0)
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
 
+        triples.add((x2, r1, x1))
+        triples.add((x2, r2, entity_id))
 
-def reasoning(question, cluster_chain_of_entities, args):
-    prompt = prompt_evaluate + question
-    chain_prompt = "\n".join(
-        [", ".join([str(x) for x in chain]) for sublist in cluster_chain_of_entities for chain in sublist]
+    # print(len(triples))
+
+    query3 = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT DISTINCT ?x1 ?r1 ?x2 ?r2 WHERE {{
+        ?x1 ?r1 ?x2 .
+        ns:{entity} ?r2 ?x2 .
+        {one_hop_relations}
+        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
+        FILTER regex(?r2, "http://rdf.freebase.com/ns/")
+    }}
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
     )
-    prompt += "\nKnowledge Triplets: " + chain_prompt + "A: "
 
-    response = run_llm(prompt, args.temperature_reasoning, args.max_length, args.opeani_api_keys, args.LLM_type)
-    print(response)
-    result = extract_answer(response)
-    if if_true(result):
-        return True, response
-    else:
-        return False, response
+    sparql.setQuery(query3)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query3)
+        exit(0)
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
+
+        triples.add((x1, r1, x2))
+        triples.add((entity_id, r2, x2))
+
+    # print(len(triples))
+
+    query4 = """
+    PREFIX ns: <http://rdf.freebase.com/ns/>
+    SELECT DISTINCT ?x1 ?r1 ?x2 ?r2 WHERE {{
+        ?x2 ?r1 ?x1 .
+        ns:{entity} ?r2 ?x2 .
+        {one_hop_relations}
+        FILTER regex(?r1, "http://rdf.freebase.com/ns/")
+        FILTER regex(?r2, "http://rdf.freebase.com/ns/")
+    }}
+    """.format(
+        entity=entity_id, one_hop_relations=one_hop_relations
+    )
+
+    sparql.setQuery(query4)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query4)
+        exit(0)
+    for result in results["results"]["bindings"]:
+        x1 = result["x1"]["value"].replace(ns_prefix, "")
+        r1 = result["r1"]["value"].replace(ns_prefix, "")
+        x2 = result["x2"]["value"].replace(ns_prefix, "")
+        r2 = result["r2"]["value"].replace(ns_prefix, "")
+
+        triples.add((x2, r1, x1))
+        triples.add((entity_id, r2, x2))
+
+    relations = list(set([triple[1] for triple in triples]))
+    relations = pre_filter_relations(relations)
+
+    triples = [list(triple) for triple in triples if triple[1] in relations]
+
+    return triples, relations
+
+
+def get_types(entity_id: str) -> List[str]:
+    query = """
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX ns: <http://rdf.freebase.com/ns/> 
+    SELECT (?x0 AS ?value) WHERE {{
+    SELECT DISTINCT ?x0  WHERE {{
+        ns:{entity_id} ns:type.object.type ?x0 . 
+    }}
+    }}
+    """.format(
+        entity_id=entity_id
+    )
+
+    sparql.setQuery(query)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query)
+        exit(0)
+    rtn = []
+    for result in results["results"]["bindings"]:
+        rtn.append(result["value"]["value"].replace("http://rdf.freebase.com/ns/", ""))
+
+    return rtn
+
+
+if __name__ == "__main__":
+    entity_id = ["m.0f8l9c", "m.05g2b"]
+    # print(convert_id_to_label(entity_id))
+
+    triples, relations = get_1hop_triples(entity_id)
+    print(triples)
+
+    # id = convert_label_to_id("Baltimore Ravens")
+    # print(id)
+
+    # relations = ['base.popstra.celebrity.dated',
+    #              'base.popstra.celebrity.friendship']
+    # triples, relations = get_2hop_triples(
+    #     entity_id, one_hop_relations=relations)
+    # print(len(triples))
+    # print(len(relations))
+
+    # relations = ['base.popstra.celebrity.friendship', 'base.popstra.celebrity.dated']
+    # one_hop_relations = ' '.join(['ns:'+relation for relation in relations])
+    # one_hop_relations = f'VALUES ?r2 {{ {one_hop_relations} }} .'
+    # print(one_hop_relations)

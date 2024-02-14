@@ -1,9 +1,13 @@
+from pathlib import Path
+import requests
 from prompt_list import *
 import json
 import time
 import openai
 import re
+import sys
 
+sys.path.append("src")
 # from sentence_transformers import util
 # from sentence_transformers import SentenceTransformer
 import os
@@ -297,5 +301,38 @@ def prepare_dataset(dataset_name):
     return datas, question_string
 
 
-def convert_list_to_str(topic_entity_names):
-    return "[" + ", ".join(f'"{w}"' for w in topic_entity_names) + "]"
+def convert_list_to_str(topic_entity_names, sep=" | "):
+    return "[" + sep.join(f"{w}" for w in topic_entity_names) + "]"
+
+
+def parse_llm_output_to_list(output, sep="|"):
+    match = re.search("\[(.*)\]", output)
+    if match:
+        answers = match.group(1)
+        answers = [item.strip() for item in answers.split(sep)]
+        return answers
+    else:
+        # may be truncated
+        if "[" in output:
+            answers = output[output.index("[") + 1 :]
+            answers = [item.strip() for item in answers.split(sep)]
+            return answers
+        else:
+            return None
+
+def convert_jsonl_to_json(jsonl_filepath):
+    with open(jsonl_filepath, "r") as f:
+        output_datas = [json.loads(line) for line in f.readlines()]
+
+    output_datas = sorted(output_datas, key=lambda x: x["index"])
+
+    jsonl_filepath = Path(jsonl_filepath)
+    json_filepath = jsonl_filepath.parent / f"{jsonl_filepath.stem}.json"
+
+    with open(json_filepath, "w") as f:
+        json.dump(output_datas, f, indent=2)
+
+    return str(json_filepath)
+
+if __name__ == "__main__":
+    print(parse_llm_output_to_list("[Cody Linley, Joe Jonas, Nicholas Braun, Abli"))

@@ -1,27 +1,27 @@
 Given entities and their types, please select the entity that most related to the question.
 
-Thought: Based on the given observation, \"Libya, Libya, Libya\" is the national anthem of Libya. Now I need to find out who is the leader of Libya.
+Thought: Based on the given observation, "Libya, Libya, Libya" is the national anthem of Libya. Now I need to find out who is the leader of Libya.
 Entity Name: Libya
 Candidate Entities:
-m.04gqr: ['book.book_subject', 'government.governmental_jurisdiction', 'location.country', 'location.dated_location', 'location.location', 'location.statistical_region', 'military.military_combatant', 'olympics.olympic_participating_country', 'organization.organization_member', 'organization.organization_scope', 'sports.sports_team_location', 'symbols.flag_referent', 'user.robert.military.military_power', 'user.robert.military.topic', 'user.skud.flags.topic', 'user.tsegaran.random.taxonomy_subject']
-m.0c56knr: ['book.book', 'book.written_work']
-m.0qbc3mc: ['media_common.cataloged_instance', 'music.recording']
-m.08__vfm: ['book.book_edition', 'media_common.cataloged_instance']
-m.068vwrg: ['book.book', 'book.written_work']
-m.0nn2mhv: ['music.recording', 'music.single']
-m.08lvhyj: ['book.book_edition', 'media_common.cataloged_instance']
-m.0c3cbqf: ['book.book', 'book.written_work']
-m.0c5tdnq: ['book.book_edition', 'media_common.cataloged_instance']
-m.0q9d3l0: ['music.recording', 'music.single']
-m.0qbqg3l: ['music.release_track']
-m.0nv2h_v: ['music.release_track']
-m.07l20n1: ['tv.tv_series_episode']
-m.0x22j0d: ['tv.tv_series_episode']
-m.0128llvp: ['music.recording']
-m.0j_dgzs: ['tv.tv_series_episode']
-m.0q8pn89: ['music.release_track']
-m.0128jb7n: ['music.release_track']
-m.0_jvbhk: ['music.release_track']
-m.0qjq1w8: ['music.recording']
-m.0wq81fj: ['tv.tv_series_episode']
+m.04gqr: book.book_subject, government.governmental_jurisdiction, location.country, location.dated_location, location.location, location.statistical_region, military.military_combatant, olympics.olympic_participating_country, organization.organization_member, organization.organization_scope, sports.sports_team_location, symbols.flag_referent, user.robert.military.military_power, user.robert.military.topic, user.skud.flags.topic, user.tsegaran.random.taxonomy_subject
+m.0c56knr: book.book, book.written_work
+m.0qbc3mc: media_common.cataloged_instance, music.recording
+m.08__vfm: book.book_edition, media_common.cataloged_instance
+m.068vwrg: book.book, book.written_work
+m.0nn2mhv: music.recording, music.single
+m.08lvhyj: book.book_edition, media_common.cataloged_instance
+m.0c3cbqf: book.book, book.written_work
+m.0c5tdnq: book.book_edition, media_common.cataloged_instance
+m.0q9d3l0: music.recording, music.single
+m.0qbqg3l: music.release_track
+m.0nv2h_v: music.release_track
+m.07l20n1: tv.tv_series_episode
+m.0x22j0d: tv.tv_series_episode
+m.0128llvp: music.recording
+m.0j_dgzs: tv.tv_series_episode
+m.0q8pn89: music.release_track
+m.0128jb7n: music.release_track
+m.0_jvbhk: music.release_track
+m.0qjq1w8: music.recording
+m.0wq81fj: tv.tv_series_episode
 Answer: m.04gqr

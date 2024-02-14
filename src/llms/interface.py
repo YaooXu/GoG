@@ -1,27 +1,36 @@
 import os
 import time
 import openai
-from utils.utils import set_environment_variable
+from sklearn import logger
+import tiktoken
+
+encoding = tiktoken.encoding_for_model("gpt-3.5-turbo")
 
 
-@set_environment_variable
 def run_llm(
     prompt,
     temperature=0.7,
     max_tokens=256,
     opeani_api_keys=None,
-    engine="gpt-3.5-turbo",
+    engine="gpt-3.5-turbo-0613",
     stop="\n",
     stream=False,
 ):
     if "llama" in engine.lower():
         openai.api_key = "EMPTY"
-        openai.api_base = "http://localhost:8000/v1"  # your local llama server port
+        openai.api_base = "http://localhost:18001/v1"  # your local llama server port
         engine = openai.Model.list()["data"][0]["id"]
+        print(engine)
     else:
-        if opeani_api_keys is None:
-            opeani_api_keys = os.environ["OPENAI_API_KEY"]
-        openai.api_key = opeani_api_keys
+        # if opeani_api_keys is None:
+        #     opeani_api_keys = os.environ["OPENAI_API_KEY"]
+        # openai.api_key = opeani_api_keys
+        # openai.proxy = {
+        #     "http": "socks5h://127.0.0.1:11300",
+        #     "https": "socks5h://127.0.0.1:11300",
+        # }
+        openai.api_key = 'sk-QNqOMhspQDjgGZwG33Fd56Bd9877459f9aDaC327Ff00E1Ac'
+        openai.api_base = 'https://wdapi3.61798.cn/v1'
 
     messages = [
         {"role": "system", "content": "You are an AI assistant that answers complex questions."}
@@ -31,6 +40,8 @@ def run_llm(
     f = 0
     while f == 0:
         try:
+            if len(encoding.encode(prompt)) >= 4096:
+                raise RuntimeError("maximum context length of prompt")
             response = openai.ChatCompletion.create(
                 model=engine,
                 messages=messages,
@@ -51,9 +62,9 @@ def run_llm(
 
             f = 1
         except Exception as e:
-            print(e)
             if "maximum context length" in str(e):
-                messages[-1]["content"] = messages[-1]["content"][4000:]
-            print("openai error, retry")
+                logger.error(f"{e}")
+                return None
+            logger.error(f"{e}, openai error, retry")
             time.sleep(2)
     return result

@@ -1,18 +1,27 @@
 from collections import defaultdict
+from copy import deepcopy
 import random
 import re
 import spacy
 from loguru import logger
-from kb_interface.freebase_interface import (
+from bm25_name2ids import retrieve_id2types_by_name
+from kb_interface.freebase_func import (
     convert_id_to_name_in_triples,
-    convert_label_to_id,
+    convert_name_to_id,
     get_1hop_triples,
     get_2hop_triples,
     get_types,
 )
-from utils.bm25 import BM25Retrieve, retrieve_id2types_by_names
-from utils.utils import format_prompt, read_file, shorten_relation, convert_triples_to_str
+from utils import (
+    convert_list_to_str,
+    format_prompt,
+    parse_llm_output_to_list,
+    read_file,
+    shorten_relation,
+    convert_triples_to_str,
+)
 from llms import run_llm
+from rank_bm25 import BM25Okapi
 
 
 class FreeBaseEnv:
@@ -33,7 +42,9 @@ class FreeBaseEnv:
         self.doc_to_vec = spacy.load("en_core_web_lg")
 
         self.explored_entities = set()
-        
+
+        self.mid_crucial_triples = None
+        self.n_related_triples = args.n_related_triples
         # only used in answer without kg
         self.llm_output = None
 
@@ -79,25 +90,54 @@ class FreeBaseEnv:
             if parameter == "[ALL]":
                 # repeat last search, but search two-hop
                 self.records[-1]["thought"] = self.records[-2]["thought"]
-                return self.search(str(self.records[-2]["new_entities"]))
+                entity_str = convert_list_to_str(self.records[-2]["new_entities"])
+                return self.search(entity_str)
             else:
                 return self.search(parameter)
         elif action == "generate":
             return self.generate(parameter)
 
     def generate(self, thought):
+        # [...]
+        if thought.startswith("["):
+            thought = thought[1:-1]
+
         prompt_path = read_file("prompts2/primitive_tasks/generate_triples")
+        # prompt_path = read_file("prompts2/primitive_tasks/generate_triples_wo_ctx")
         prompt = format_prompt(prompt_path)
 
+        filtered_triples = []
+        for triple in self.triples:
+            if triple[0][:2] in ["m.", "g."] or triple[-1][:2] in ["m.", "g."]:
+                continue
+            else:
+                filtered_triples.append(triple)
+
+        if len(filtered_triples):
+            delimiters = [" ", ",", ";", ".", "_", "\t"]
+            all_tokenized_triples = []
+            all_triple_strs = []
+            for triple in filtered_triples:
+                text = "\t".join(triple)
+                all_triple_strs.append(text)
+
+                tokenized_triple = re.split("|".join(map(re.escape, delimiters)), text)
+                all_tokenized_triples.append(tokenized_triple)
+            bm25_all_fns = BM25Okapi(all_tokenized_triples)
+            related_triple_strs = bm25_all_fns.get_top_n(thought, all_triple_strs, self.n_related_triples)
+            related_triple_str = "\n".join(related_triple_strs)
+        else:
+            related_triple_str = ""
+            
         sep = "\t"
         prompt = (
-            prompt + f"Thought: {self.last_thought}\n"
-            f"Known Triples: {convert_triples_to_str(sorted(self.triples), sep=sep)}\n"
+            prompt + f"Thought: {thought}\n"
+            f"Known Triples: {related_triple_str}\n"
             f"Generated Triples: "
         )
         response = run_llm(
             prompt,
-            self.args.temperature_exploration,
+            self.args.temperature,
             self.args.max_length,
             self.args.opeani_api_keys,
             self.args.LLM_type,
@@ -119,14 +159,21 @@ class FreeBaseEnv:
 
         return convert_triples_to_str(generated_triples)
 
+    def filter_crucial_triples(self, triples):
+        filtered_triples = [triple for triple in triples if triple not in self.mid_crucial_triples]
+        relations = list(set([triple[1] for triple in filtered_triples]))
+
+        return filtered_triples, relations
+
     def search(self, entity_names):
-        entity_names = eval(entity_names)
+        entity_names = parse_llm_output_to_list(entity_names)
 
         all_related_triples = []
         for entity_name in entity_names:
             entity_id = self.convert_name_to_id(entity_name)
 
             triples, relations = get_1hop_triples(entity_id)
+            triples, relations = self.filter_crucial_triples(triples)
 
             for i in range(len(relations)):
                 # only remain the last two parts
@@ -153,15 +200,17 @@ class FreeBaseEnv:
 
         all_related_triples = sorted(all_related_triples)
 
+        self.triples.extend(deepcopy(all_related_triples))
+
         self.records[-1]["triples"] = all_related_triples
         self.records[-1]["entity_names"] = entity_names
         self.records[-1]["one_hop_relations"] = filtered_relations
 
         new_entities = set()
         for triple in all_related_triples:
-            if triple[0] in self.name_to_id:
+            if triple[0].lower() in self.name_to_id:
                 new_entities.add(triple[0])
-            if triple[2] in self.name_to_id:
+            if triple[2].lower() in self.name_to_id:
                 new_entities.add(triple[2])
         new_entities -= self.explored_entities
         self.records[-1]["new_entities"] = list(new_entities)
@@ -187,10 +236,11 @@ class FreeBaseEnv:
 
         filtered_relations = run_llm(
             prompt,
-            self.args.temperature_exploration,
+            self.args.temperature,
             self.args.max_length,
             self.args.opeani_api_keys,
             self.args.LLM_type,
+            stop=None,
         )
 
         filtered_relations = [rel.strip() for rel in filtered_relations.split(",")]
@@ -203,8 +253,9 @@ class FreeBaseEnv:
         prompt_path = read_file("prompts2/primitive_tasks/select_entity")
         prompt = format_prompt(prompt_path)
 
-        id_to_types = dict(sorted(id_to_types.items(), key=lambda x: len(x[-1]), reverse=True))
-        candidite_entities = [f"{k}: {str(v)}" for k, v in id_to_types.items()]
+        id_to_types = sorted(id_to_types.items(), key=lambda x: len(x[-1]), reverse=True)
+        id_to_types = dict(id_to_types[:10])
+        candidite_entities = [f"{k}: {', '.join(v)}" for k, v in id_to_types.items()]
         candidite_entities = "\n".join(candidite_entities)
 
         prompt = (
@@ -216,7 +267,7 @@ class FreeBaseEnv:
 
         entity_id = run_llm(
             prompt,
-            self.args.temperature_exploration,
+            self.args.temperature,
             self.args.max_length,
             self.args.opeani_api_keys,
             self.args.LLM_type,
@@ -246,7 +297,7 @@ class FreeBaseEnv:
             entity_id = entity_name
         else:
             if entity_name.lower() in self.name_to_id:
-                logger.debug("explored entity")
+                logger.debug(f"explored entity: {entity_name}")
                 entity_id = self.name_to_id[entity_name.lower()]
 
         if not entity_id:
@@ -264,12 +315,13 @@ class FreeBaseEnv:
 
             else:
                 # not in explored graph, may be generated by LLM
-                logger.debug(f"generated entity: {entity_name}")
+                id_to_types = retrieve_id2types_by_name(entity_name)
 
-                id_to_types = retrieve_id2types_by_names(entity_name)
                 entity_id = self.select_entity_id_by_types(
                     self.last_thought, entity_name, id_to_types
                 )
+                # TODO: There is no candidate entity related to the question "China" in the given list.
+                logger.debug(f"generated entity: {entity_id}")
                 self.update_name_to_id({entity_name: entity_id})
 
         return entity_id
@@ -324,12 +376,7 @@ class FreeBaseEnv:
 
 
 if __name__ == "__main__":
-    ids = retrieve_id2types_by_names(
-        ["Libya"],
-        'Based on the given observation, "Libya, Libya, Libya" is the national anthem of Libya. Now I need to find out who is the leader of Libya.',
+    id2types = retrieve_id2types_by_name(
+        "Libya",
     )
-    print(ids)
-
-    for id in ids:
-        print(id)
-        print(get_types(id))
+    print(id2types)

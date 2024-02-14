@@ -4,12 +4,12 @@ import sys
 from networkx import topological_generations
 
 sys.path.append("./src")
-from freebase_func import id2entity_name_or_type
+from kb_interface.freebase_func import id2entity_name_or_type
 
-from freebase_interface import convert_id_to_label
+from kb_interface.freebase_func import convert_id_to_label
 
 import json
-from utils.utils import format_prompt, run_llm
+from utils import format_prompt, run_llm
 
 with open("./data/cwq/train_dev.json", "r") as f:
     samples = json.load(f)

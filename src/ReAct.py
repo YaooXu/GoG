@@ -10,36 +10,30 @@ import argparse
 from environment import FreeBaseEnv
 
 from dotenv import load_dotenv
+from evaluate import eval_results
+from kb_interface.freebase_func import convert_name_to_id
 from llms import run_llm
-from utils.bm25 import BM25Retrieve
 from threading import Lock
 from datasets import load_dataset
-from utils.utils import format_prompt, read_file, proxy_load_dataset, convert_list_to_str
+from utils import (
+    convert_jsonl_to_json,
+    format_prompt,
+    parse_llm_output_to_list,
+    read_file,
+    proxy_load_dataset,
+    convert_list_to_str,
+)
 from loguru import logger
 
-logger.add(sink="log", mode="w")
 load_dotenv()
 
 lock = Lock()
 
 
-def convert_jsonl_to_json(jsonl_filepath):
-    with open(jsonl_filepath, "r") as f:
-        output_datas = [json.loads(line) for line in f.readlines()]
-
-    output_datas = sorted(output_datas, key=lambda x: x["index"])
-
-    jsonl_filepath = Path(jsonl_filepath)
-    json_filepath = jsonl_filepath.parent / f"{jsonl_filepath.stem}.json"
-
-    with open(json_filepath, "w") as f:
-        json.dump(output_datas, f, indent=2)
-
-
 def answer_question_without_kg(env: FreeBaseEnv, prompt):
     output = run_llm(
         prompt,
-        args.temperature_exploration,
+        args.temperature,
         512,
         args.opeani_api_keys,
         args.LLM_type,
@@ -49,21 +43,21 @@ def answer_question_without_kg(env: FreeBaseEnv, prompt):
     match = re.search("Finish(\[.*\])", output)
     if match:
         answers = match.group(1)
-        answers = eval(answers)
+        answers = parse_llm_output_to_list(answers)
     else:
         answers = ["unknown"]
     env.llm_output = output
     return answers
 
 
-def write_results(data, preprocessed_data, env: FreeBaseEnv, answer):
+def write_results(data, env: FreeBaseEnv, prediction):
     with lock:
-        with open("./predictions.jsonl", "a") as f:
+        with open(output_file, "a") as f:
             res = {
                 "index": data["index"],
                 "question": data["question"],
-                "prediction": answer,
-                "ground_truth": preprocessed_data["answer"],
+                "prediction": prediction,
+                "ground_truth": data["answer"],
                 "records": env.records,
             }
             if env.llm_output:
@@ -76,7 +70,8 @@ def find_answer(process_idx, idxes_to_process):
     logger.debug(f"{process_idx}, {idxes_to_process[0]}")
 
     instruction = format_prompt(read_file("prompts2/instruction"))
-    example = format_prompt(read_file("prompts2/example"))
+
+    example = format_prompt(read_file("prompts2/examples"))
 
     t1 = time.time()
     for n, idx in enumerate(idxes_to_process):
@@ -87,10 +82,11 @@ def find_answer(process_idx, idxes_to_process):
 
         try:
             data = datas[idx]
-            preprocessed_data = dataset[data["index"]]
+            if "question" not in data:
+                data["question"] = data["ProcessedQuestion"]
 
             topic_entity_names = sorted(data["topic_entity"].values())
-            topic_entity_names_str = convert_list_to_str(topic_entity_names)
+            topic_entity_names_str = "[" + " | ".join(topic_entity_names) + "]"
 
             base_prompt = (
                 instruction
@@ -100,13 +96,15 @@ def find_answer(process_idx, idxes_to_process):
             logger.debug(data["question"])
 
             env = FreeBaseEnv(args, data["topic_entity"])
+            env.mid_crucial_triples = data["mid_crucial_triples"]
+
             n_calls, n_badcalls, n_expand = 0, 0, 0
             done = False
             prompt = base_prompt
 
             if args.no_kb:
-                answers = answer_question_without_kg(env, base_prompt)
-                write_results(data, preprocessed_data, env, answers)
+                prediction = answer_question_without_kg(env, base_prompt)
+                write_results(data, env, prediction)
                 continue
 
             for _ in range(6):
@@ -115,11 +113,12 @@ def find_answer(process_idx, idxes_to_process):
                 n_calls += 1
                 thought_action = run_llm(
                     prompt + f"Thought {i}:",
-                    args.temperature_exploration,
+                    args.temperature,
                     args.max_length,
                     args.opeani_api_keys,
                     args.LLM_type,
-                    [f"\nObservation {i}:"],
+                    # [f"\nObservation {i}:"],
+                    [f"Observation"],
                 )
                 try:
                     thought, action = thought_action.strip().split(f"\nAction {i}: ")
@@ -130,7 +129,7 @@ def find_answer(process_idx, idxes_to_process):
                     thought = thought_action.strip().split("\n")[0]
                     action = run_llm(
                         prompt + f"Thought {i}: {thought}\nAction {i}:",
-                        args.temperature_exploration,
+                        args.temperature,
                         args.max_length,
                         args.opeani_api_keys,
                         args.LLM_type,
@@ -140,12 +139,12 @@ def find_answer(process_idx, idxes_to_process):
                 logger.debug(f"{thought}, {action}")
                 match = re.search("Finish(\[.*\])", action)
                 if match:
-                    answers = match.group(1)
-                    answers = eval(answers)
-                    if answers[0][:2] in ["m.", "g."]:
+                    prediction = match.group(1)
+                    prediction = parse_llm_output_to_list(prediction)
+                    if prediction[0][:2] in ["m.", "g."]:
                         # Finish["m.0h3d7qb"]
                         action = "Search" + action[6:]
-                    elif answers[0].lower() == "unknown":
+                    elif prediction[0].lower() == "unknown":
                         # Finish["unkown"]
                         # not enough information even after generation
                         # expand to 2-hop sub-graph
@@ -153,18 +152,21 @@ def find_answer(process_idx, idxes_to_process):
                         while "generate" in env.last_action.lower():
                             env.records.pop()
                         assert "search" in env.last_action.lower()
+
+                        i = len(env.records) + 1
+
                         action = "Search[ALL]"
                         n_expand += 1
-                        if n_expand >= 3:
+                        if n_expand >= args.max_n_expand:
                             logger.debug("max n_expand, break")
-                            answers = answer_question_without_kg(env, base_prompt)
+                            prediction = answer_question_without_kg(env, base_prompt)
                             done = True
                     else:
                         done = True
 
                 env.records.append({"i": i, "thought": thought, "action": action})
                 if done:
-                    write_results(data, preprocessed_data, env, answers)
+                    write_results(data, env, prediction)
                     break
 
                 obs = env.step(action[0].lower() + action[1:])
@@ -176,9 +178,15 @@ def find_answer(process_idx, idxes_to_process):
                 records_str = env.convert_records_to_str()
                 prompt = base_prompt + records_str
 
-            logger.debug(f"ground truth: {preprocessed_data['answer']}")
+            if not done:
+                prediction = answer_question_without_kg(env, base_prompt)
+                write_results(data, env, prediction)
+
+            logger.debug(f"ground truth: {data['answer']}")
         except Exception as e:
-            logger.error(f'{e}')
+            logger.error(f"{e}, trying get answer without kg")
+            prediction = answer_question_without_kg(env, base_prompt)
+            write_results(data, env, prediction)
 
     logger.info(f"{process_idx} finished")
 
@@ -186,19 +194,19 @@ def find_answer(process_idx, idxes_to_process):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--dataset", type=str, default="./data/cwq_dev.json", help="choose the dataset."
+        "--dataset",
+        type=str,
+        default="data/cwq/samples_with_crucial_triples_100_0.json",
+        help="choose the dataset.",
     )
     parser.add_argument(
-        "--max_length", type=int, default=128, help="the max length of LLMs output."
+        "--max_length", type=int, default=256, help="the max length of LLMs output."
     )
     parser.add_argument(
-        "--temperature_exploration",
+        "--temperature",
         type=float,
-        default=0.3,
+        default=0.7,
         help="the temperature in exploration stage.",
-    )
-    parser.add_argument(
-        "--temperature_reasoning", type=float, default=0, help="the temperature in reasoning stage."
     )
     parser.add_argument("--width", type=int, default=3, help="choose the search width of ToG.")
     parser.add_argument("--depth", type=int, default=3, help="choose the search depth of ToG.")
@@ -232,30 +240,41 @@ if __name__ == "__main__":
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--n_process", type=int, default=1)
     parser.add_argument("--no_kb", action="store_true")
+    parser.add_argument("--output_dir", default="results")
+    parser.add_argument("--max_n_expand", default=3)
+    parser.add_argument("--n_related_triples", type=int, default=10)
 
     args = parser.parse_args()
+    logger.debug(f"{args}")
 
     datas = json.load(open(args.dataset, "r"))
-    dataset = proxy_load_dataset("rmanluo/RoG-cwq", split="test")
 
-    datas = datas[:100]
+    dataset_name = args.dataset.split("/")[1]
+    output_file = (
+        Path(f"./{args.output_dir}/{dataset_name}/{args.LLM_type}")
+        / f"{args.n_related_triples}_{args.max_n_expand}_{args.temperature}_{Path(args.dataset).stem}_predictions.jsonl"
+    )
 
-    if "index" not in datas[0]:
-        for i, data in enumerate(datas):
-            data["index"] = i
-        with open(args.dataset, "w") as f:
-            json.dump(datas, f, indent=2)
+    output_file.parent.mkdir(parents=True, exist_ok=True)
 
-    if os.path.exists("./predictions.jsonl") and not args.force:
-        with open("./predictions.jsonl", "r") as f:
+    logger.add(
+        sink=output_file.parent / f"{args.temperature}_{Path(args.dataset).stem}.log",
+        mode="w",
+    )
+
+    print(output_file)
+
+    if os.path.exists(output_file) and not args.force:
+        with open(output_file, "r") as f:
             output_datas = [json.loads(line) for line in f.readlines()]
         processed_idxes = set([data["index"] for data in output_datas])
 
         idxes_to_process = set(range(len(datas))) - processed_idxes
         idxes_to_process = sorted(list(idxes_to_process))
+        print(idxes_to_process)
     else:
-        idxes_to_process = list(range(len(datas)))
-        with open("./predictions.jsonl".format(args.dataset), "w") as f:
+        idxes_to_process = range(len(datas))
+        with open(output_file, "w") as f:
             pass
 
     num_samples = len(idxes_to_process)
@@ -263,9 +282,6 @@ if __name__ == "__main__":
 
     n_process = min(args.n_process, num_samples)
     logger.debug(n_process)
-
-    # random.shuffle(idxes_to_process)
-    # idxes_to_process = [52]
 
     if n_process > 1:
         with Pool(processes=n_process) as pool:
@@ -280,7 +296,8 @@ if __name__ == "__main__":
                 st = ed
 
             results = pool.starmap(find_answer, jobs)
-    else:
+    elif n_process == 1:
         find_answer(0, idxes_to_process)
 
-    convert_jsonl_to_json("./predictions.jsonl")
+    json_filepath = convert_jsonl_to_json(output_file)
+    eval_results(json_filepath)

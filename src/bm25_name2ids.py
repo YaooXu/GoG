@@ -1,17 +1,59 @@
 import bz2
 from collections import defaultdict
 import re
+from statistics import median_grouped
 import time
 import os
 import multiprocessing as mp
 import pickle
+from typing import List
+from SPARQLWrapper import SPARQLWrapper, JSON
 import requests
 
 from tqdm import tqdm
 from rank_bm25 import BM25Okapi
+import urllib
+from flask import Flask, request, jsonify
+
+import sys
+
+sys.path.append("src")
+
+app = Flask(__name__)
 
 
-from kb_interface.freebase_interface import get_types
+sparql = SPARQLWrapper("http://127.0.0.1:18890/sparql")
+sparql.setReturnFormat(JSON)
+ns_prefix = "http://rdf.freebase.com/ns/"
+
+
+def get_types(entity: str) -> List[str]:
+    query = (
+        """
+    PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
+    PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
+    PREFIX ns: <http://rdf.freebase.com/ns/> 
+    SELECT (?x0 AS ?value) WHERE {
+    SELECT DISTINCT ?x0  WHERE {
+    """
+        "ns:" + entity + " ns:type.object.type ?x0 . "
+        """
+    }
+    }
+    """
+    )
+    # print(query)
+    sparql.setQuery(query)
+    try:
+        results = sparql.query().convert()
+    except urllib.error.URLError:
+        print(query)
+        exit(0)
+    rtn = []
+    for result in results["results"]["bindings"]:
+        rtn.append(result["value"]["value"].replace("http://rdf.freebase.com/ns/", ""))
+
+    return rtn
 
 
 def chunkify_file(filepath, num_chunks, skiplines=-1):
@@ -68,7 +110,7 @@ def process_chunk(chunk_data):
 
     processer = process_class()
 
-    # print(f"start {chunk_start}")
+    print(f"start {chunk_start}")
 
     i = 0
     st = time.time()
@@ -89,13 +131,14 @@ def process_chunk(chunk_data):
 
             if i % 1_000_000 == 0:
                 ed = time.time()
-                # print(
-                #     ed - st,
-                #     f.tell() - chunk_start,
-                #     "/",
-                #     chunk_size,
-                #     (f.tell() - chunk_start) / chunk_size,
-                # )
+                print(
+                    chunk_start,
+                    ed - st,
+                    f.tell() - chunk_start,
+                    "/",
+                    chunk_size,
+                    (f.tell() - chunk_start) / chunk_size,
+                )
                 st = ed
 
             if f.tell() - chunk_start >= chunk_size:
@@ -125,7 +168,7 @@ def parallel_process_file(input_file_path, process_class, num_procs, skiplines=0
 
     jobs = [list(x) + [process_class] for x in jobs]
 
-    # print("Starting the parallel pool for {} jobs ".format(len(jobs)))
+    print("Starting the parallel pool for {} jobs ".format(len(jobs)))
 
     # maxtaskperchild - if not supplied some weird happend and memory blows as the processes keep on lingering
     with mp.Pool(num_parallel, maxtasksperchild=1000) as pool:
@@ -141,54 +184,49 @@ def parallel_process_file(input_file_path, process_class, num_procs, skiplines=0
     return output
 
 
-class Construct_label_to_id:
+class ConstructName2id:
     def __init__(self) -> None:
-        self.name_to_id_dict = {}
+        self.name_to_id_dict = defaultdict(set)
 
     def process_line(self, line):
-        info = line.split("\t")
-        name = info[0]
-        score = float(info[1])
-        mid = info[2].strip()
-        if name in self.name_to_id_dict:
-            self.name_to_id_dict[name][mid] = score
-        else:
-            self.name_to_id_dict[name] = {}
-            self.name_to_id_dict[name][mid] = score
+        s, p, name, _ = line.strip().split("\t")
+        mid = s[s.rfind("/") + 1 : -1]
+        if p == "<http://rdf.freebase.com/ns/type.object.name>" and mid[:2] in ("m.", "g."):
+            name = eval(name[:-3]).lower()
+            self.name_to_id_dict[name].add(mid)
 
     def return_result(self):
         return self.name_to_id_dict
 
     @staticmethod
     def merge_results(list_of_results):
-        merged_dict = {}
+        merged_dict = defaultdict(set)
 
         for dictionary in list_of_results:
             for key, value in dictionary.items():
-                if key in merged_dict:
-                    merged_dict[key].update(value)
-                else:
-                    merged_dict[key] = value
+                merged_dict[key].update(value)
 
+        for k, v in merged_dict.items():
+            merged_dict[k] = list(v)
         return merged_dict
 
 
 class BM25Retrieve:
-    def __init__(self, filepath="Freebase/surface_map_file_freebase_complete_all_mention") -> None:
-        self.label_to_id = parallel_process_file(
+    def __init__(self, filepath="Freebase/virtuoso-opensource/database/FilterFreebase") -> None:
+        self.name_to_ids = parallel_process_file(
             filepath,
-            Construct_label_to_id,
+            ConstructName2id,
             10,
         )
 
-        self.all_fns = list(self.label_to_id.keys())
+        self.all_fns = list(self.name_to_ids.keys())
         self.tokenized_all_fns = [fn.split() for fn in self.all_fns]
-
+        print(self.tokenized_all_fns)
         self.bm25_all_fns = BM25Okapi(self.tokenized_all_fns)
 
     @staticmethod
     def load(
-        filepath="Freebase/surface_map_file_freebase_complete_all_mention", re_process=False
+        filepath="Freebase/virtuoso-opensource/database/FilterFreebase", re_process=False
     ) -> "BM25Retrieve":
         pkl_path = "Freebase/bm25.pkl"
         if os.path.exists(pkl_path) and not re_process:
@@ -201,81 +239,66 @@ class BM25Retrieve:
                 pickle.dump(retrieve, f)
             return retrieve
 
-    def retrieve_ids_by_names(self, names, question):
-        return_mid_list = []
+    def retrieve_id2types_by_names(self, names):
+        all_mid_to_types = []
         for fn_org in names:
-            drop_dot = fn_org.split()
-            drop_dot = [seg.strip(".") for seg in drop_dot]
-            drop_dot = " ".join(drop_dot)
-            if fn_org.lower() not in question and drop_dot.lower() in question:
-                fn_org = drop_dot
-            if fn_org.lower() not in self.label_to_id:
+            if fn_org.lower() not in self.name_to_ids:
                 print("fn_org: {}".format(fn_org.lower()))
                 tokenized_query = fn_org.lower().split()
                 fn = self.bm25_all_fns.get_top_n(tokenized_query, self.all_fns, n=1)[0]
                 print("sub fn: {}".format(fn))
             else:
                 fn = fn_org
-            if fn.lower() in self.label_to_id:
-                id_dict = self.label_to_id[fn.lower()]
-            if len(id_dict) > 15:
-                mids = self.get_right_mid_set(fn.lower(), id_dict, question)
-            else:
-                mids = sorted(id_dict.items(), key=lambda x: x[1], reverse=True)
-                mids = [mid[0] for mid in mids]
-            return_mid_list.append(mids)
-        return return_mid_list
+            if fn.lower() in self.name_to_ids:
+                mids = self.name_to_ids[fn.lower()]
 
-    def get_right_mid_set(self, fn, id_dict, question):
-        type_to_mid_dict = {}
-        type_list = []
-        for mid in id_dict:
-            types = get_types(mid)
-            for cur_type in types:
-                if not cur_type.startswith("common.") and not cur_type.startswith("base."):
-                    if cur_type not in type_to_mid_dict:
-                        type_to_mid_dict[cur_type] = {}
-                        type_to_mid_dict[cur_type][mid] = id_dict[mid]
-                    else:
-                        type_to_mid_dict[cur_type][mid] = id_dict[mid]
-                    type_list.append(cur_type)
-        tokenized_type_list = [re.split("\.|_", doc) for doc in type_list]
-        #     tokenized_question = tokenizer.tokenize(question)
-        tokenized_question = question.split()
-        bm25 = BM25Okapi(tokenized_type_list)
-        top10_types = bm25.get_top_n(tokenized_question, type_list, n=10)
-        selected_types = top10_types[:3]
-        selected_mids = []
-        for any_type in selected_types:
-            # logger.info("any_type: {}".format(any_type))
-            # logger.info("type_to_mid_dict[any_type]: {}".format(type_to_mid_dict[any_type]))
-            selected_mids += list(type_to_mid_dict[any_type].keys())
-        return selected_mids
+            mid_to_types = {}
+            for mid in mids:
+                types = get_types(mid)
+                types = [
+                    type
+                    for type in types
+                    if not type.startswith("common.") and not type.startswith("base.")
+                ]
+                if not len(types):
+                    continue
+                mid_to_types[mid] = sorted(types)
+
+            mid_to_types = dict(
+                sorted(mid_to_types.items(), key=lambda x: len(x[-1]), reverse=True)
+            )
+            all_mid_to_types.append(mid_to_types)
+
+        return all_mid_to_types
 
 
-def retrieve_id2types_by_names(label):
-    url = "http://210.75.240.139:18891/label2id"
+@app.route("/name2ids", methods=["POST"])
+def convert_name_to_id():
+    try:
+        data = request.json  # 获取 JSON 数据
+        if "names" in data:
+            names = data["names"]
+            all_mid_to_types = bm25.retrieve_id2types_by_names(names)
+            result = {"status": "success", "all_mid_to_types": all_mid_to_types}
+        else:
+            result = {"status": "error", "message": 'Key "names" not found in JSON data.'}
+    except Exception as e:
+        result = {"status": "error", "message": str(e)}
+
+    return jsonify(result)
+
+
+def retrieve_id2types_by_name(name):
+    url = "http://localhost:18891/name2ids"
     data = {
-        "labels": [label],
+        "names": [name],
     }
     response = requests.post(url, json=data)
-    # print(response.json())
+
     return response.json()['all_mid_to_types'][0]
 
 
 if __name__ == "__main__":
-    # with open("Freebase/surface_map_file_freebase_complete_all_mention") as f:
-    #     lines = f.readlines()
-    # name_to_id_dict = {}
-    # for line in tqdm(lines):
-    #     info = line.split("\t")
-    #     name = info[0]
-    #     score = float(info[1])
-    #     mid = info[2].strip()
-    #     if name in name_to_id_dict:
-    #         name_to_id_dict[name][mid] = score
-    #     else:
-    #         name_to_id_dict[name] = {}
-    #         name_to_id_dict[name][mid] = score
+    bm25 = BM25Retrieve.load()
 
-    bm25 = BM25Retrieve()
+    app.run(port=18891, host="0.0.0.0")

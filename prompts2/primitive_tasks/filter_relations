@@ -1,5 +1,6 @@
 Please select 3 relations that most relevant to the question and rank them.
-You should answer these relations in list format directly.
+You should answer these relations in list format directly without redundant words.
+Here are some examples.
 
 Thought: I need to search George Washington Colonials men's basketball, find the education institution that has it.
 Entity: George Washington Colonials men's basketball
