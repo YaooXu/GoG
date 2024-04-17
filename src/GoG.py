@@ -242,14 +242,14 @@ if __name__ == "__main__":
     parser.add_argument("--no_kb", action="store_true")
     parser.add_argument("--output_dir", default="results")
     parser.add_argument("--max_n_expand", default=3)
-    parser.add_argument("--n_related_triples", type=int, default=10)
+    parser.add_argument("--n_related_triples", type=int, default=15)
 
     args = parser.parse_args()
     logger.debug(f"{args}")
 
     datas = json.load(open(args.dataset, "r"))
 
-    dataset_name = args.dataset.split("/")[1]
+    dataset_name = args.dataset.split("/")[-2]
     output_file = (
         Path(f"./{args.output_dir}/{dataset_name}/{args.LLM_type}")
         / f"{args.n_related_triples}_{args.max_n_expand}_{args.temperature}_{Path(args.dataset).stem}_predictions.jsonl"
