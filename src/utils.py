@@ -64,13 +64,13 @@ def read_file(filepath: str):
     return content
 
 
-def read_json(filepath: str):
+def load_json(filepath: str):
     with open(filepath, "r") as f:
         content = json.load(f)
     return content
 
 
-def read_jsonl(filepath: str):
+def load_jsonl(filepath: str):
     datas = []
     with open(filepath, "r") as f:
         for line in f.readlines():

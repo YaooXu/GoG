@@ -17,5 +17,5 @@ python src/generate_samples_with_crucial_edges.py
 ## Runing GoG
 
 ```bash
-python src/GoG.py --n_process=4 --dataset data/cwq/data_with_ct_1000_all_1.json --LLM_type gpt-3.5-turbo
+python src/GoG.py --n_process=4 --dataset data/cwq/data_with_ct_1000_-1_1.json --LLM_type gpt-3.5-turbo
 ```

@@ -1,5 +1,5 @@
 jsonlines
-openai
+openai==0.27.9
 SPARQLWrapper
 tqdm
 argparse

@@ -22,15 +22,13 @@ def run_llm(
         engine = openai.Model.list()["data"][0]["id"]
         print(engine)
     else:
-        # if opeani_api_keys is None:
-        #     opeani_api_keys = os.environ["OPENAI_API_KEY"]
-        # openai.api_key = opeani_api_keys
-        # openai.proxy = {
-        #     "http": "socks5h://127.0.0.1:11300",
-        #     "https": "socks5h://127.0.0.1:11300",
-        # }
-        openai.api_key = 'sk-QNqOMhspQDjgGZwG33Fd56Bd9877459f9aDaC327Ff00E1Ac'
-        openai.api_base = 'https://wdapi3.61798.cn/v1'
+        if opeani_api_keys is None:
+            opeani_api_keys = os.environ["OPENAI_API_KEY"]
+        openai.api_key = opeani_api_keys
+        openai.proxy = {
+            "http": "socks5h://127.0.0.1:11300",
+            "https": "socks5h://127.0.0.1:11300",
+        }
 
     messages = [
         {"role": "system", "content": "You are an AI assistant that answers complex questions."}
