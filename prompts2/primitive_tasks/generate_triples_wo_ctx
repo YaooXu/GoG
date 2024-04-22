@@ -1,0 +1,5 @@
+Given the existing triples, please generate some new triples related to your current thought. These new triples may come from your inherent knowledge directly or reasoning from the given triples.
+
+Thought: which state is George Washington University in
+Generated Triples: George Washington University	location.located_in	Foggy Bottom
+George Washington University	location.located_in	Washington, D.C.
