@@ -24,11 +24,11 @@ def run_llm(
     else:
         if opeani_api_keys is None:
             opeani_api_keys = os.environ["OPENAI_API_KEY"]
-        openai.api_key = opeani_api_keys
-        openai.proxy = {
-            "http": "socks5h://127.0.0.1:11300",
-            "https": "socks5h://127.0.0.1:11300",
-        }
+        # openai.api_key = opeani_api_keys
+        # openai.proxy = {
+        #     "http": "socks5h://127.0.0.1:11300",
+        #     "https": "socks5h://127.0.0.1:11300",
+        # }
 
     messages = [
         {"role": "system", "content": "You are an AI assistant that answers complex questions."}
