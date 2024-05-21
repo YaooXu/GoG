@@ -28,7 +28,7 @@ mv virtuoso.ini.sample virtuoso.ini
 
 # ../bin/virtuoso-t -df # start the service in the shell
 ../bin/virtuoso-t  # start the service in the backend.
-../bin/isql 11111 dba dba # run the database
+../bin/isql 1111 dba dba # run the database
 
 # 1、unzip the data and use rdf_loader to import
 SQL>
