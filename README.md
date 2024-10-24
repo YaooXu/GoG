@@ -8,16 +8,6 @@ In this documentation, we detail how to construct Incomplete KGs and run GoG.
 
 See ./Freebase/README.md
 
-## Selecting Crucial Triples
-
-**This step can be skipped, as all processed data are contained in the /data.**
-The results on WebQSP could be slightly different, as we overwrite the original files mistakenly.
-
-```bash
-python src/generate_samples_with_crucial_edges_by_prob.py
-```
-
-
 ## Setting .env file
 
 You should set a .env file to config your service port, api_key and proxy if necessary.
@@ -31,6 +21,16 @@ SPARQLPATH=http://127.0.0.1:18890/sparql
 base_url=https://api.openai.com/v1
 opeani_api_keys=
 ```
+
+## Selecting Crucial Triples
+
+**This step can be skipped, as all processed data are contained in the /data.**
+The results on WebQSP could be slightly different, as we overwrite the original files mistakenly.
+
+```bash
+python src/generate_samples_with_crucial_edges_by_prob.py
+```
+
 
 
 ## Starting name_to_id service
