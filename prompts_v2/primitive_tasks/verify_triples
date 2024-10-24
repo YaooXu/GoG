@@ -1,0 +1,40 @@
+Given the LLM-generated triples, please select the triples that are most relevant to the question and most likely to be correct.
+
+Here are some examples.
+
+Question: the time zone of Cupertino
+Generated triples: 
+### 1
+Cupertino	timezone	Pacific Standard Time
+### 2
+California	timezone	Pacific Standard Time
+Cupertino	timezone	Pacific Standard Time
+### 3
+Cupertino	timezone	Eastern Standard Time
+Answer: Cupertino	timezone	Pacific Standard Time
+### 4
+Cupertino	timezone	Pacific Standard Time
+### 5
+Cupertino	timezone	Pacific Standard Time
+California	timezone	Pacific Standard Time
+
+Question: what is the political system of South Africa
+Generated triples: 
+### 1
+South Africa	government.government_type	Parliamentary republic
+### 2
+South Africa	country.government_type	Constitutional parliamentary republic
+### 3
+South Africa	government.government_type	Constitutional republic
+South Africa	government.legislative_branch	Parliament of South Africa
+South Africa	government.executive_branch	President of South Africa
+### 4
+South Africa    government.government_type	Constitutional republic
+South Africa    government.government_type	Parliamentary republic
+### 5
+South Africa	country.political_system	Constitutional republic
+South Africa	country.political_system	Parliamentary republic
+Answer: South Africa	government.government_type	Constitutional republic
+South Africa	government.government_type	Parliamentary republic
+
+Here is the question.

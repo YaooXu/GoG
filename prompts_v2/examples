@@ -1,0 +1,79 @@
+Solve a question answering task with interleaving Thought, Action, Observation steps. You should always generate Thought decomposing the question before Action. Action can be three types: 
+(1) Search[entity1 | entity2 | ...], which searches the exact entities on Freebase and returns their one-hop subgraphs. You should extract the all concrete entities appeared in your last thought without redundant words, and you should always select entities from topic entities in the first search.
+(2) Generate[thought], which generate some new triples related to your last thought. These new triples may come from your inherent knowledge directly or reasoning from the given triples.
+(3) Finish[answer1 | answer2 | ...], which returns the answer and finishes the task. The answers should be complete entity label appeared in the triples. If you don't know the answer, please output Finish[unknown]. 
+Entities and answers should be separated by | .
+Attention please, entities begin with "m." (e.g., m.01041_p3) represent CVT (compound value type) node, and they shouldn't be selected as the final answers. To find out those entities involved in these event, you could select them as the entities to be searched.
+You must generate each Thought and Action directly without any redundant word.
+
+Here are some examples.
+
+Question: What state is the the education institution has a sports team named George Washington Colonials men's basketball in?
+Topic Entity: [George Washington Colonials men's basketball]
+Thought 1: I need to search George Washington Colonials men's basketball, find the education institution that has it.
+Action 1: Search[George Washington Colonials men's basketball]
+Observation 1: George Washington Colonials men's basketball, school_sports_team.school, George Washington University
+George Washington Colonials men's basketball, sports_team.sport, basketball
+George Washington Colonials, athletics_brand.teams, George Washington Colonials men's basketball
+Thought 2: George Washington University has the team named George Washington Colonials men's basketball, so I need to find out which state is George Washington University in.
+Action 2: Search[George Washington University]
+Observation 2: George Washington University, organization.headquarters, m.0cnnz2d
+George Washington University, location.contains, Madison Hall
+George Washington University, location.events, 2003 DC Asian Pacific American Film Festival
+Thought 3: There is no information about which state is George Washington University in, so I need to generate more triples based on these given triples and my inherent knowledge.
+Action 3: Generate[which state is George Washington University in]
+Observation 3: 2003 DC Asian Pacific American Film Festival, event.locations, Washington, D.C.
+George Washington University, location.located_in, Washington, D.C.
+Thought 4: So the answer is Washington, D.C.
+Action 4: Finish[Washington, D.C]
+
+Question: Who dated the performer who headlined the concert tour called Demi World Tour?
+Topic Entity: [Demi World Tour]
+Thought 1: I need to find the performer who headlined the Demi World Tour and then find out who dated them.
+Action 1: Search[Demi World Tour]
+Observation 1: m.063gd6q, dated.participant, Demi Lovato
+m.064cvl8, dated.participant, Demi Lovato
+m.065py_5, dated.participant, Demi Lovato
+m.065q3fy, dated.participant, Demi Lovato
+m.0cq9shl, romantic_relationship.celebrity, Demi Lovato
+m.0_xw9hk, romantic_relationship.celebrity, Demi Lovato
+m.01041_p3, romantic_relationship.celebrity, Demi Lovato
+Thought 2: m.063gd6q, m.064cvl8, m.065py_5, m.065q3fy could be CVT node, I need to search them to find out persons participated in these dating events.
+Action 2: Search[m.063gd6q | m.064cvl8 | m.065py_5 | m.065q3fy]
+Observation 2: Cody Linley, celebrity.dated, m.063gd6q
+Cody Linley, celebrity.dated, m.065py_5
+Demi Lovato, celebrity.dated, m.063gd6q
+Demi Lovato, celebrity.dated, m.064cvl8
+Demi Lovato, celebrity.dated, m.065py_5
+Demi Lovato, celebrity.dated, m.065q3fy
+Joe Jonas, celebrity.dated, m.065q3fy
+Nicholas Braun, celebrity.dated, m.064cvl8
+m.063gd6q, dated.participant, Cody Linley
+m.063gd6q, dated.participant, Demi Lovato
+m.064cvl8, dated.participant, Demi Lovato
+m.064cvl8, dated.participant, Nicholas Braun
+m.065py_5, dated.participant, Cody Linley
+m.065py_5, dated.participant, Demi Lovato
+m.065q3fy, dated.participant, Demi Lovato
+m.065q3fy, dated.participant, Joe Jonas
+Thought 3: Based on the given observations, Cody Linley, Joe Jonas, and Nicholas Braun have dated Demi Lovato. These are the entities that have dated the performer who headlined the concert tour called Demi World Tour.
+Action 3: Finish[Cody Linley | Joe Jonas | Nicholas Braun]
+
+Question: Which school with the fight song The Orange and Blue did Emmitt Smith play for?
+Topic Entity: [Emmitt Smith | The Orange and Blue]
+Thought 1: I need to find football teams related to both emmitt smith and Orange and Blue.
+Action 1: Search[Emmitt Smith | The Orange and Blue]
+Observation 1: The Orange and Blue, fight_song.sports_team, Florida Gators football
+Florida Gators football, sports_team.fight_song, The Orange and Blue
+The Orange and Blue, topic.notable_for, g.125b2pqsh
+Emmitt Smith, person.profession, American football player
+Emmitt Smith, person.profession, Athlete
+Emmitt Smith, pro_athlete.teams, m.0hqd__y
+Emmitt Smith, pro_athlete.teams, m.0hqf002
+Emmitt Smith, pro_athlete.teams, m.0hqf007
+Thought 2: Only one team's fight song is The Orange and Blue, so the final answer is Florida Gators football.
+Action 2: Finish[Florida Gators football]
+
+Here is the question.
+
+You must generate each Thought and Action directly without any redundant word.

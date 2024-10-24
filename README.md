@@ -10,10 +10,28 @@ See ./Freebase/README.md
 
 ## Selecting Crucial Triples
 
-This step can be skipped, as all processed data are contained in the /data.
+**This step can be skipped, as all processed data are contained in the /data.**
+The results on WebQSP could be slightly different, as we overwrite the original files mistakenly.
+
 ```bash
-python src/generate_samples_with_crucial_edges.py
+python src/generate_samples_with_crucial_edges_by_prob.py
 ```
+
+
+## Setting .env file
+
+You should set a .env file to config your service port, api_key and proxy if necessary.
+```bash
+# this proxy is used to access openai and huggingface, not necessary.
+# custom_proxy=socks5://127.0.0.1:11300
+
+SPARQLPATH=http://127.0.0.1:18890/sparql
+
+# change the base_url and opeani_api_keys if you use vllm to deploy your local service
+base_url=https://api.openai.com/v1
+opeani_api_keys=
+```
+
 
 ## Starting name_to_id service
 
@@ -27,9 +45,9 @@ python src/bm25_name2ids.py
 ## Runing GoG
 
 ```bash
-python src/GoG.py --n_process=4 --dataset data/cwq/data_with_ct_1000_-1_1.json
+python src/GoG.py --n_process=1 --dataset data/cwq/data_with_ct_0.2.json
 ```
 
-## Proxy
+`data_with_ct_0.2.json` represents IKG-20% in the paper.
 
-If you want to access openai and huggingface with proxy, please uncomment lines and change the proxy address in `run_llm` in `src/llms/interface.py` and `set_environment_variable` in `src/utils.py`.
+The results could be different from that of the original paper, as the gpt-3.5-turbo-0613 we use is not available. We suggest using Qwen-1.5-72b-chat.

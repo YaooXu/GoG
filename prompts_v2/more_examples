@@ -1,0 +1,20 @@
+Question: What year did the sports team with the fight song The Baltimore Fight Song win the superbowl
+Topic Entity: ["Baltimore Fight Song", "Superbowl"]
+Thought 1: It's a composition questoin, I need to search for the team with the Baltimore Fight Song and find out which year they won the Superbowl.
+Action 1: Search["Baltimore Fight Song"]
+Observation 1: Baltimore Ravens, sports_team.fight_song, The Baltimore Fight Song
+The Baltimore Fight Song, fight_song.sports_team, Baltimore Ravens
+The Baltimore Fight Song, topic.notable_for, g.125h3_8kx
+Thought 2: The team with the Baltimore Fight Song is the Baltimore Ravens. Now I need to find out in which year they won the Superbowl.
+Action 2: Search["Baltimore Ravens"]
+Observation 2: 2001 AFC Championship Game, sports_championship_event.champion, Baltimore Ravens
+2013 AFC Championship Game, sports_championship_event.champion, Baltimore Ravens
+Baltimore Ravens, football_team.current_head_coach, John Harbaugh
+Baltimore Ravens, sports_team.championships, 2001 AFC Championship Game
+Baltimore Ravens, sports_team.championships, 2013 AFC Championship Game
+Baltimore Ravens, sports_team.championships, Super Bowl XLVII
+Baltimore Ravens, sports_team.championships, Super Bowl XXXV
+Super Bowl XLVII, sports_championship_event.champion, Baltimore Ravens
+Super Bowl XXXV, sports_championship_event.champion, Baltimore Ravens
+Thought 3: The Baltimore Ravens won the Super Bowl in the Super Bowl XLVII and Super Bowl XXXV. 
+Action 3: Finish["Super Bowl XLVII", "Super Bowl XXXV"]

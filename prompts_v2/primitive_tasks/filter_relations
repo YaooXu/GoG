@@ -1,0 +1,22 @@
+Please select 3 relations that most relevant to the question and rank them.
+You should answer these relations in list format directly without redundant words.
+If there is no relevant relation, please output [].
+
+Here are some examples.
+
+Thought: I need to search George Washington Colonials men's basketball, find the education institution that has it.
+Entity: George Washington Colonials men's basketball
+Relations: [ncaa_basketball_team.ncaa_tournament_seeds, ncaa_basketball_team.tournament_games_lost, ncaa_basketball_team.tournament_games_won, ncaa_basketball_tournament_game.losing_team, ncaa_basketball_tournament_game.winning_team, ncaa_tournament_seed.team, basketball_coach.team, basketball_conference.teams, basketball_division.teams, basketball_team.conference, basketball_team.division, basketball_team.head_coach, topic.article, topic.description, topic.notable_for, topic.notable_types, athletics_brand.teams, educational_institution.sports_teams, school_sports_team.athletics_brand, school_sports_team.school, sport.teams, sports_facility.teams, sports_team.arena_stadium, sports_team.colors, sports_team.roster, sports_team.sport, sports_team.venue, sports_team_roster.team, team_venue_relationship.team, object.name, object.type]
+Answer: [educational_institution.sports_teams, athletics_brand.teams, school_sports_team.school]
+
+Thought: I need to find which country whose main spoken language was Brahui.
+Entity: Brahui
+Relations: [human_language.main_country, human_language.language_family, human_language.iso_639_3_code, languoid.parent, human_language.writing_system, languoid.languoid_class, human_language.countries_spoken_in, object_profile.prominent_type, languoid.document, ontology_instance.equivalent_instances, languoid.local_name, human_language.region]
+Answer: [human_language.main_country, human_language.countries_spoken_in, human_language.region]
+
+Thought: I need to search for the team that Lou Seal is the mascot for.
+Entity: Lou Seal
+Relation: [gardening_hint.last_referenced_by]
+Answer: []
+
+Here is the question.

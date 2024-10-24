@@ -16,13 +16,16 @@ from datasets import load_dataset
 
 def set_environment_variable(func):
     def wrapper(*args, **kwargs):
-        # os.environ["http_proxy"] = "socks5h://127.0.0.1:11300"
-        # os.environ["https_proxy"] = "socks5h://127.0.0.1:11300"
+        if "custom_proxy" in os.environ:
+            os.environ["http_proxy"] = os.environ["custom_proxy"]
+            os.environ["https_proxy"] = os.environ["custom_proxy"]
 
-        result = func(*args, **kwargs)
+            result = func(*args, **kwargs)
 
-        # del os.environ["http_proxy"]
-        # del os.environ["https_proxy"]
+            del os.environ["http_proxy"]
+            del os.environ["https_proxy"]
+        else:
+            result = func(*args, **kwargs)
 
         return result
 

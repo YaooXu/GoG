@@ -1,3 +1,7 @@
+from dotenv import load_dotenv
+load_dotenv()
+
+import multiprocessing
 from multiprocessing import Pool
 import os
 from pathlib import Path
@@ -8,8 +12,9 @@ from tqdm import tqdm
 import json
 import argparse
 from environment import FreeBaseEnv
+from FlagEmbedding import FlagReranker
+from sentence_transformers import SentenceTransformer
 
-from dotenv import load_dotenv
 from evaluate import eval_results
 from kb_interface.freebase_func import convert_name_to_id
 from llms import run_llm
@@ -24,35 +29,50 @@ from utils import (
     convert_list_to_str,
 )
 from loguru import logger
+import traceback
 
-load_dotenv()
+
+multiprocessing.set_start_method('spawn', force=True)
 
 lock = Lock()
 
 
-def answer_question_without_kg(env: FreeBaseEnv, prompt):
-    output = run_llm(
-        prompt,
-        args.temperature,
-        512,
-        args.opeani_api_keys,
-        args.LLM_type,
-        stop=None,
-        stream=True,
-    )
-    match = re.search("Finish(\[.*\])", output)
-    if match:
-        answers = match.group(1)
-        answers = parse_llm_output_to_list(answers)
-    else:
-        answers = ["unknown"]
+def answer_question_without_kg(env: FreeBaseEnv, prompt, args):
+    legal = False
+    n_retry = 0
+    while not legal:
+        n_retry += 1
+        if n_retry == 6:
+            answers = ["unknown"]
+            break
+
+        try:
+            output = run_llm(
+                prompt,
+                args.temperature,
+                512,
+                args.opeani_api_keys,
+                args.LLM_type,
+                stop=None,
+            )
+            logger.info(output)
+            
+            match = re.search("Finish(\[.*\])", output)
+            answers = match.group(1)
+            answers = parse_llm_output_to_list(answers)
+
+            legal = True
+        except:
+            continue
+
     env.llm_output = output
+
     return answers
 
 
-def write_results(data, env: FreeBaseEnv, prediction):
+def write_results(data, env: FreeBaseEnv, prediction, args):
     with lock:
-        with open(output_file, "a") as f:
+        with open(args.output_file, "a") as f:
             res = {
                 "index": data["index"],
                 "question": data["question"],
@@ -66,12 +86,21 @@ def write_results(data, env: FreeBaseEnv, prediction):
             f.write(json.dumps(res) + "\n")
 
 
-def find_answer(process_idx, idxes_to_process):
+def find_answer(process_idx, idxes_to_process, args, datas):
     logger.debug(f"{process_idx}, {idxes_to_process[0]}")
 
-    instruction = format_prompt(read_file("prompts2/instruction"))
+    # if args.wiki:
+    #     instruction = format_prompt(read_file("prompts2/instruction_wiki"))
+    #     example = format_prompt(read_file("prompts2/examples_wiki"))
+    # else:
+    #     instruction = format_prompt(read_file("prompts2/instruction"))
+    #     instruction = format_prompt(read_file("prompts2/instruction"))
 
-    example = format_prompt(read_file("prompts2/examples"))
+    # instruction = format_prompt(read_file("prompts2/instruction"))
+    if args.no_kg:
+        example = format_prompt(read_file(f"{args.prompt_dir}/examples_no-kg"))
+    else:
+        example = format_prompt(read_file(f"{args.prompt_dir}/examples"))
 
     t1 = time.time()
     for n, idx in enumerate(idxes_to_process):
@@ -89,22 +118,22 @@ def find_answer(process_idx, idxes_to_process):
             topic_entity_names_str = "[" + " | ".join(topic_entity_names) + "]"
 
             base_prompt = (
-                instruction
-                + example
+                example
                 + f'Question: {data["question"]}\nTopic Entity: {topic_entity_names_str}\n'
             )
+
             logger.debug(data["question"])
 
-            env = FreeBaseEnv(args, data["topic_entity"])
+            env = FreeBaseEnv(args, data["topic_entity"], data['question'])
             env.mid_crucial_triples = data["mid_crucial_triples"]
 
             n_calls, n_badcalls, n_expand = 0, 0, 0
             done = False
             prompt = base_prompt
 
-            if args.no_kb:
-                prediction = answer_question_without_kg(env, base_prompt)
-                write_results(data, env, prediction)
+            if args.no_kg:
+                prediction = answer_question_without_kg(env, base_prompt, args)
+                write_results(data, env, prediction, args)
                 continue
 
             for _ in range(6):
@@ -112,33 +141,62 @@ def find_answer(process_idx, idxes_to_process):
 
                 n_calls += 1
                 thought_action = run_llm(
-                    prompt + f"Thought {i}:",
+                    prompt + f"Thought {i}: ",
                     args.temperature,
                     args.max_length,
                     args.opeani_api_keys,
                     args.LLM_type,
-                    # [f"\nObservation {i}:"],
-                    [f"Observation"],
+                    f"\nObservation",
                 )
-                try:
-                    thought, action = thought_action.strip().split(f"\nAction {i}: ")
-                except:
-                    logger.debug(f"ohh... {thought_action}")
-                    n_badcalls += 1
-                    n_calls += 1
-                    thought = thought_action.strip().split("\n")[0]
-                    action = run_llm(
-                        prompt + f"Thought {i}: {thought}\nAction {i}:",
-                        args.temperature,
-                        args.max_length,
-                        args.opeani_api_keys,
-                        args.LLM_type,
-                        stop=[f"\n"],
-                    ).strip()
 
-                logger.debug(f"{thought}, {action}")
+                legal = False
+                n_retry = 0
+                while not legal:
+                    n_retry += 1
+                    if n_retry == 6:
+                        thought, action = None, None
+                        break
+
+                    try:
+                        thought_action = f"Thought {i}: " + thought_action
+                        
+                        thought_pattern = r'Thought \d+: (.+)'
+                        action_pattern = r'Action \d+: (.+)'
+
+                        thought_match = re.search(thought_pattern, thought_action)
+                        action_match = re.search(action_pattern, thought_action)
+
+                        thought = thought_match.group(1)
+                        action = action_match.group(1)
+
+                        legal = True
+                    except:
+                        # output final answers directly
+                        if 'Finish' in thought_action:
+                            thought = action = thought_action
+                            legal = True
+                        else:
+                            logger.debug(f"ohh... {thought_action}")
+                            continue
+                        # n_badcalls += 1
+                        # n_calls += 1
+                        # thought = thought_action.strip().split("\n")[0]
+                        # logger.debug(f"thought...{thought}")
+                        # action = run_llm(
+                        #     prompt + f"Thought {i}: {thought}\nAction {i}:",
+                        #     args.temperature,
+                        #     args.max_length,
+                        #     args.opeani_api_keys,
+                        #     args.LLM_type,
+                        #     'Observation'
+                        # ).strip()
+
+                logger.debug(f"Thought {i}: {thought}")
+                logger.debug(f"Action {i}: {action}")
+
                 match = re.search("Finish(\[.*\])", action)
                 if match:
+                    logger.debug("Match  ", match)
                     prediction = match.group(1)
                     prediction = parse_llm_output_to_list(prediction)
                     if prediction[0][:2] in ["m.", "g."]:
@@ -159,17 +217,17 @@ def find_answer(process_idx, idxes_to_process):
                         n_expand += 1
                         if n_expand >= args.max_n_expand:
                             logger.debug("max n_expand, break")
-                            prediction = answer_question_without_kg(env, base_prompt)
+                            prediction = answer_question_without_kg(env, base_prompt, args)
                             done = True
                     else:
                         done = True
 
                 env.records.append({"i": i, "thought": thought, "action": action})
                 if done:
-                    write_results(data, env, prediction)
+                    write_results(data, env, prediction, args)
                     break
 
-                obs = env.step(action[0].lower() + action[1:])
+                obs = env.step(action)
                 obs = obs.replace("\\n", "")
                 env.records[-1]["observation"] = obs
 
@@ -177,16 +235,17 @@ def find_answer(process_idx, idxes_to_process):
 
                 records_str = env.convert_records_to_str()
                 prompt = base_prompt + records_str
+                logger.debug(records_str)
 
             if not done:
-                prediction = answer_question_without_kg(env, base_prompt)
-                write_results(data, env, prediction)
+                prediction = answer_question_without_kg(env, base_prompt, args)
+                write_results(data, env, prediction, args)
 
             logger.debug(f"ground truth: {data['answer']}")
         except Exception as e:
-            logger.error(f"{e}, trying get answer without kg")
-            prediction = answer_question_without_kg(env, base_prompt)
-            write_results(data, env, prediction)
+            logger.error(f"{traceback.print_exc()}, trying get answer without kg")
+            prediction = answer_question_without_kg(env, base_prompt, args)
+            write_results(data, env, prediction, args)
 
     logger.info(f"{process_idx} finished")
 
@@ -196,7 +255,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset",
         type=str,
-        default="data/cwq/samples_with_crucial_triples_100_0.json",
+        default="data/cwq/data_with_ct_0.2.json",
         help="choose the dataset.",
     )
     parser.add_argument(
@@ -214,7 +273,7 @@ if __name__ == "__main__":
         "--remove_unnecessary_rel",
         type=bool,
         default=True,
-        help="whether rem6oving unnecessary relations.",
+        help="whether removing unnecessary relations.",
     )
     parser.add_argument(
         "--LLM_type", type=str, default="gpt-3.5-turbo-0613", help="base LLM model."
@@ -239,21 +298,29 @@ if __name__ == "__main__":
     )
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--n_process", type=int, default=1)
-    parser.add_argument("--no_kb", action="store_true")
+    parser.add_argument("--no_kg", action="store_true")
     parser.add_argument("--output_dir", default="results")
     parser.add_argument("--max_n_expand", default=3)
-    parser.add_argument("--n_related_triples", type=int, default=15)
+    parser.add_argument("--n_related_triples", type=int, default=10)
+    parser.add_argument("--wiki", action="store_true")
+    parser.add_argument("--wiki_num", default=3, type=int)
+    parser.add_argument("--prompt_dir", default='prompts_v2', type=str)
+    parser.add_argument("--sc_num", type=int, default=1,
+                        help="choose the number of self-consistency check.")
 
     args = parser.parse_args()
     logger.debug(f"{args}")
 
     datas = json.load(open(args.dataset, "r"))
 
-    dataset_name = args.dataset.split("/")[-2]
+    postfix = '_no-kb' if args.no_kg else ""
+    dataset_name = args.dataset.split("/")[1]
     output_file = (
-        Path(f"./{args.output_dir}/{dataset_name}/{args.LLM_type}")
-        / f"{args.n_related_triples}_{args.max_n_expand}_{args.temperature}_{Path(args.dataset).stem}_predictions.jsonl"
+        Path(f"./{args.output_dir}/{args.LLM_type.split('/')[-1]}/{dataset_name}")
+        / f"{args.sc_num}_{args.n_related_triples}_{args.max_n_expand}_{args.temperature}_{Path(args.dataset).stem + postfix}_predictions.jsonl"
     )
+
+    args.output_file = output_file
 
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -269,19 +336,23 @@ if __name__ == "__main__":
             output_datas = [json.loads(line) for line in f.readlines()]
         processed_idxes = set([data["index"] for data in output_datas])
 
-        idxes_to_process = set(range(len(datas))) - processed_idxes
-        idxes_to_process = sorted(list(idxes_to_process))
-        print(idxes_to_process)
+        datas = [data for data in datas if data['index'] not in processed_idxes]
+
+        logger.debug(len(datas))
     else:
-        idxes_to_process = range(len(datas))
         with open(output_file, "w") as f:
             pass
+
+    idxes_to_process = range(len(datas))
 
     num_samples = len(idxes_to_process)
     logger.debug(num_samples)
 
     n_process = min(args.n_process, num_samples)
     logger.debug(n_process)
+
+    # args.model = SentenceTransformer("BAAI/bge-large-en-v1.5")
+    # args.reranker = FlagReranker("BAAI/bge-reranker-large", use_fp16=True)
 
     if n_process > 1:
         with Pool(processes=n_process) as pool:
@@ -291,13 +362,13 @@ if __name__ == "__main__":
             for i in range(n_process):
                 ed = st + num_samples_in_chunk
                 ed = min(ed, num_samples)
-                jobs.append([i, idxes_to_process[st:ed]])
+                jobs.append([i, idxes_to_process[st:ed], args, datas])
 
                 st = ed
 
             results = pool.starmap(find_answer, jobs)
     elif n_process == 1:
-        find_answer(0, idxes_to_process)
+        find_answer(0, idxes_to_process, args, datas)
 
     json_filepath = convert_jsonl_to_json(output_file)
     eval_results(json_filepath)

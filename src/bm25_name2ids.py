@@ -1,3 +1,6 @@
+from dotenv import load_dotenv
+load_dotenv()
+
 import bz2
 from collections import defaultdict
 import re
@@ -22,7 +25,7 @@ sys.path.append("src")
 app = Flask(__name__)
 
 
-sparql = SPARQLWrapper("http://127.0.0.1:18890/sparql")
+sparql = SPARQLWrapper(os.environ['SPARQLPATH'])
 sparql.setReturnFormat(JSON)
 ns_prefix = "http://rdf.freebase.com/ns/"
 

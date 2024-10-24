@@ -1,0 +1,13 @@
+QC: Which education institution has a sports team named George Washington Colonials men's basketball?
+QS: [extract_entity] Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["George Washington Colonials men's basketball"].
+QS: [filter_relations] Entity: ["George Washington Colonials men's basketball"]. Question: Which education institution has a sports team named George Washington Colonials men's basketball? 
+A: ["education.educational_institution.sports_teams", "sports.school_sports_team.school", "education.athletics_brand.teams", "sports.school_sports_team.athletics_brand"]
+QS: [EOS]
+
+QC: What countries share borders with Spain?
+QS: [extract_entity] What countries share borders with Spain?
+A: ["Spain"]
+QS: [filter_relations] Entity: ["Spain"]. Question: What countries share borders with Spain?
+A: ["location.adjoining_relationship.adjoins", "location.location.adjoin_s", "location.location.area", "location.location.containedby"]
+QS: [EOS]

@@ -1,0 +1,12 @@
+Please identify the entities in the given question.
+You should answer these entities in list format directly.
+
+Q: Which education institution has a sports team named George Washington Colonials men's basketball?
+A: ["George Washington Colonials men's basketball"]
+
+Q: What year did Baltimore Ravens win the superbowl?
+A: ["Baltimore Ravens", "superbowl"]
+
+Q: What countries share borders with Spain?
+A: ["Spain"]
+

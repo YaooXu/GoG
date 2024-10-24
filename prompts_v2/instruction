@@ -1,0 +1,7 @@
+Solve a question answering task with interleaving Thought, Action, Observation steps. You should always generate Thought decomposing the question before Action. Action can be three types: 
+(1) Search[entity1 | entity2 | ...], which searches the exact entities on Freebase and returns their one-hop subgraphs. You should extract the all concrete entities appeared in your last thought without redundant words, and you should always select entities from topic entities in the first search.
+(2) Generate[thought], which generate some new triples related to your last thought. These new triples may come from your inherent knowledge directly or reasoning from the given triples.
+(3) Finish[answer1 | answer2 | ...], which returns the answer and finishes the task. The answers should be complete entity label appeared in the triples. If you don't know the answer, please output Finish[unknown]. 
+Entities and answers should be separated by | .
+Attention please, entities begin with "m." (e.g., m.01041_p3) represent CVT (compound value type) node, and they shouldn't be selected as the final answers. To find out those entities involved in these event, you could select them as the entities to be searched.
+You must generate each Thought and Action directly without any redundant word.

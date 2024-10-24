@@ -5,11 +5,14 @@ import urllib
 from pathlib import Path
 from numpy import tri
 from tqdm import tqdm
-
+from sentence_transformers import util
+import sys
+import os
+sys.path.append("src")
 from utils import add_ns, remove_ns
 
 
-sparql = SPARQLWrapper("http://210.75.240.139:18890/sparql")
+sparql = SPARQLWrapper(os.environ['SPARQLPATH'])
 sparql.setReturnFormat(JSON)
 ns_prefix = "http://rdf.freebase.com/ns/"
 
@@ -29,7 +32,7 @@ def replace_relation_prefix(relations):
 
 def replace_entities_prefix(entities):
     return [
-        entity["entity"]["value"].replace("http://rdf.freebase.com/ns/", "") for entity in entities
+        entity["entity"]["value"].replace("http://rdf.freebase.com/ns/", "") if entity['entity']['type']=='uri' else "@."+entity['entity']['value'] for entity in entities
     ]
 
 
@@ -45,7 +48,7 @@ def get_tail_entity(entity_id, relation):
     entities = execurte_sparql(sparql_text)
 
     entities = replace_entities_prefix(entities)
-    entity_ids = [entity for entity in entities if entity.startswith("m.")]
+    entity_ids = [entity for entity in entities if entity.startswith("m.")  or entity.startswith("@.")]
 
     return entity_ids
 
@@ -62,7 +65,7 @@ def get_head_entity(entity_id, relation):
     entities = execurte_sparql(sparql_text)
 
     entities = replace_entities_prefix(entities)
-    entity_ids = [entity for entity in entities if entity.startswith("m.")]
+    entity_ids = [entity for entity in entities if entity.startswith("m.")  or entity.startswith("@.")]
 
     return entity_ids
 
@@ -436,12 +439,38 @@ def get_types(entity_id: str) -> List[str]:
     return rtn
 
 
+def retrieve_top_ent(query, docs, model, topk=3):
+    """
+    Retrieve the topk most relevant entities for the given query.
+
+    Parameters:
+    - query (str): The input query.
+    - docs (list of str): The list of (entity,id,relation) to search from.
+    - model_name (str): The name of the SentenceTransformer model to use.
+    - topk (int): The number of top entities to return.
+
+    Returns:
+    - list of str: A list of the topk entity with id and relations.
+    """
+
+    query_emb = model.encode(query)
+    doc_emb = model.encode(docs)
+
+    scores = util.dot_score(query_emb, doc_emb)[0].cpu().tolist()
+
+    doc_score_pairs = sorted(list(zip(docs, scores)), key=lambda x: x[1], reverse=True)
+
+    top_docs = [pair[0] for pair in doc_score_pairs[:topk]]
+
+    return top_docs
+
 if __name__ == "__main__":
-    entity_id = ["m.0f8l9c", "m.05g2b"]
+    entity_id = ["m.01hf7f", "m.0ffttg"]
     # print(convert_id_to_label(entity_id))
 
     triples, relations = get_1hop_triples(entity_id)
     print(triples)
+    print(relations)
 
     # id = convert_label_to_id("Baltimore Ravens")
     # print(id)

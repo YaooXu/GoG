@@ -3,14 +3,16 @@ from copy import deepcopy
 import random
 import re
 import spacy
+import traceback
+import asyncio
 from loguru import logger
 from bm25_name2ids import retrieve_id2types_by_name
 from kb_interface.freebase_func import (
     convert_id_to_name_in_triples,
-    convert_name_to_id,
     get_1hop_triples,
     get_2hop_triples,
     get_types,
+    retrieve_top_ent
 )
 from utils import (
     convert_list_to_str,
@@ -18,16 +20,17 @@ from utils import (
     parse_llm_output_to_list,
     read_file,
     shorten_relation,
-    convert_triples_to_str,
+    convert_triples_to_str
 )
 from llms import run_llm
 from rank_bm25 import BM25Okapi
 
 
 class FreeBaseEnv:
-    def __init__(self, args, topic_entities) -> None:
+    def __init__(self, args, topic_entities, question) -> None:
         self.args = args
         self.topic_entities = topic_entities
+        self.question = question
 
         self.records = []
 
@@ -83,7 +86,8 @@ class FreeBaseEnv:
         pattern = r"(\w+)(\[.+\])"
         result = re.match(pattern, action_str)
 
-        action = result.group(1)
+        logger.debug(f'Result: {result}')
+        action = result.group(1).lower()
         parameter = result.group(2)
 
         if action == "search":
@@ -102,9 +106,11 @@ class FreeBaseEnv:
         if thought.startswith("["):
             thought = thought[1:-1]
 
-        prompt_path = read_file("prompts2/primitive_tasks/generate_triples")
-        # prompt_path = read_file("prompts2/primitive_tasks/generate_triples_wo_ctx")
+        prompt_path = read_file(f"{self.args.prompt_dir}/primitive_tasks/generate_triples")
+        # prompt_path = read_file(f"{self.args.prompt_dir}/primitive_tasks/generate_triples_wo_ctx")
         prompt = format_prompt(prompt_path)
+
+        n = self.args.sc_num
 
         filtered_triples = []
         for triple in self.triples:
@@ -124,17 +130,74 @@ class FreeBaseEnv:
                 tokenized_triple = re.split("|".join(map(re.escape, delimiters)), text)
                 all_tokenized_triples.append(tokenized_triple)
             bm25_all_fns = BM25Okapi(all_tokenized_triples)
-            related_triple_strs = bm25_all_fns.get_top_n(thought, all_triple_strs, self.n_related_triples)
+            related_triple_strs = bm25_all_fns.get_top_n(
+                thought, all_triple_strs, self.n_related_triples)
             related_triple_str = "\n".join(related_triple_strs)
         else:
             related_triple_str = ""
-            
+
+        self.records[-1]["related_triples"] = related_triple_str.split('\n')
+
         sep = "\t"
         prompt = (
             prompt + f"Thought: {thought}\n"
             f"Known Triples: {related_triple_str}\n"
             f"Generated Triples: "
         )
+
+        logger.debug(f"Generate prompt:{prompt}")
+
+        responses = run_llm(
+            prompt,
+            self.args.temperature,
+            self.args.max_length,
+            self.args.opeani_api_keys,
+            self.args.LLM_type,
+            stop=None,
+            n=n
+        )
+
+        if n == 1:
+            responses = [responses]
+        self.records[-1]["generated_triples"] = {}
+        for i, response in enumerate(responses):
+            generated_triples = []
+            logger.debug(responses)
+            for line in response.split("\n"):
+                try:
+                    h, r, t = [item.strip() for item in line.split(sep)]
+                    generated_triples.append([h, r, t])
+                except Exception as e:
+                    logger.error(traceback.format_exc())
+                    logger.error(line)
+
+            generated_triples = sorted(generated_triples)
+            self.records[-1]["generated_triples"][i + 1] = generated_triples
+
+        if n > 1:
+            verified_triples = self.verify(thought)
+            result = convert_triples_to_str(verified_triples)
+        else:
+            result = convert_triples_to_str(generated_triples)
+
+        return result
+
+    def verify(self, thought):
+        prompt_path = read_file(f"{self.args.prompt_dir}/primitive_tasks/verify_triples")
+        prompt = format_prompt(prompt_path)
+
+        triples = self.records[-1]["generated_triples"]
+        triples_str = ""
+        for key in triples.keys():
+            triples_str += f'\n### {key}\n'
+            triples_str += convert_triples_to_str(triples[key], '\t')
+
+        prompt = (
+            prompt + f"Question: {thought}\n"
+            f"Generated Triples: {triples_str}\n"
+            f"Answer: "
+        )
+        verified_triples = []
         response = run_llm(
             prompt,
             self.args.temperature,
@@ -144,20 +207,16 @@ class FreeBaseEnv:
             stop=None,
         )
 
-        generated_triples = []
         for line in response.split("\n"):
             try:
-                h, r, t = [item.strip() for item in line.split(sep)]
-                generated_triples.append([h, r, t])
+                h, r, t = [item.strip() for item in line.split('\t')]
+                verified_triples.append([h, r, t])
             except Exception as e:
-                logger.debug(e)
-                logger.debug(line)
+                logger.error(traceback.format_exc())
+                logger.error(line)
 
-        generated_triples = sorted(generated_triples)
-
-        self.records[-1]["generated_triples"] = generated_triples
-
-        return convert_triples_to_str(generated_triples)
+        self.records[-1]['verified_triples'] = verified_triples
+        return verified_triples
 
     def filter_crucial_triples(self, triples):
         filtered_triples = [triple for triple in triples if triple not in self.mid_crucial_triples]
@@ -222,15 +281,16 @@ class FreeBaseEnv:
     def filter_relations(self, entity_name, relations, thought):
         # logger.debug(f"{thought}\n{entity_name}")
 
-        prompt_path = read_file("prompts2/primitive_tasks/filter_relations")
+        prompt_path = read_file(f"{self.args.prompt_dir}/primitive_tasks/filter_relations")
         prompt = format_prompt(prompt_path)
-        relations = sorted(relations)
+        random.shuffle(relations)
+        # relations = sorted(relations)
         # logger.debug(f"original relations {relations}")
 
         prompt = (
             prompt + f"Thought: {thought}\n"
             f"Entity: {entity_name}\n"
-            f"Relation: {', '.join(relations)}\n"
+            f"Relation: [{', '.join(relations)}]\n"
             f"Answer: "
         )
 
@@ -243,14 +303,16 @@ class FreeBaseEnv:
             stop=None,
         )
 
-        filtered_relations = [rel.strip() for rel in filtered_relations.split(",")]
+        # filtered_relations = [rel.strip() for rel in filtered_relations.split(",")]
+        # TODO: could generate relations not appeared in the relation list
+        filtered_relations = parse_llm_output_to_list(filtered_relations, sep=',')
 
         return filtered_relations
 
     def select_entity_id_by_types(self, question, entity_name, id_to_types):
         # logger.debug(f"{thought}\n{entity_name}")
 
-        prompt_path = read_file("prompts2/primitive_tasks/select_entity")
+        prompt_path = read_file(f"{self.args.prompt_dir}/primitive_tasks/select_entity")
         prompt = format_prompt(prompt_path)
 
         id_to_types = sorted(id_to_types.items(), key=lambda x: len(x[-1]), reverse=True)
@@ -259,7 +321,7 @@ class FreeBaseEnv:
         candidite_entities = "\n".join(candidite_entities)
 
         prompt = (
-            prompt + f"Thought: {question}\n"
+            prompt + f"Question: {question}\n"
             f"Entity Name: {entity_name}\n"
             f"Candidate Entities:\n{candidite_entities}\n"
             f"Answer: "
